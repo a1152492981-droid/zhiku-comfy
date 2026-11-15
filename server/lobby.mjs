@@ -76,7 +76,7 @@ const server = http.createServer(async (req, res) => {
             const img = db.posts.filter(p => !p.hidden).flatMap(p => p.images).find(i => i.id === id);
             if (!img) fail(404, '图片不存在');
             const bytes = await readFile(imagePath(img.id));
-            res.writeHead(200, { ...headers, 'Content-Type': img.mime }); res.end(bytes); return;
+            res.writeHead(200, { ...headers, 'Content-Type': img.mime, 'Cache-Control': 'public, max-age=31536000, immutable' }); res.end(bytes); return;
         }
         if (req.method === 'GET' && u.pathname === '/lobby/tags') {
             const tags = new Map();
