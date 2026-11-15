@@ -53,13 +53,18 @@ import {applySceneNegCompatibility} from './scene-neg-compat.mjs';
 import {applySceneOverwriteCompatibility} from './scene-overwrite-compat.mjs';
 import {applyIdeaPoseCompatibility} from './idea-pose-compat.mjs';
 import {applyFakeArtistYearCompatibility} from './fake-artist-year-compat.mjs';
+import {applyComicModelTokensCompatibility} from './comic-model-tokens-compat.mjs';
+import {applyModelParamsCompatibility} from './model-params-compat.mjs';
+import {applyComicParamsCompatibility} from './comic-params-compat.mjs';
+import {applyInsetCompatibility} from './inset-compat.mjs';
+import {applyBuiltinScenesCompatibility} from './builtin-scenes-compat.mjs';
 import {fileURLToPath} from 'node:url';
 process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
 let s=applyMarkers(JSON.parse(fs.readFileSync('zhiku.script.json','utf8')).content);
 function patch(a,b){assert.equal(s.split(a).length,2,a.slice(0,80));s=s.replace(a,()=>b);}
-patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.67';");
-patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · 原生扩展版 v0.8.67');
+patch("globalThis.__PC_VERSION = '0.6.3';", "globalThis.__PC_VERSION = '0.8.69';");
+patch('智库 · 酒馆助手脚本版 v0.6.3','智库 · 原生扩展版 v0.8.69');
 patch('    const run = () => {\n        saving = saving.then(writeNow)', '    const run = () => {\n        saveTimer = null;\n        saving = saving.then(writeNow)');
 patch('return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl };', 'return { getData, onChange, loadData, commit, replaceData, uploadImage, deleteImageFile, imgUrl, fileToDataUrl, urlToDataUrl, shrinkDataUrl, flush: () => saveTimer !== null ? commit({ immediate: true, silent: true }) : saving };');
 // Preserve nested API error messages and object details in both response paths.
@@ -5398,7 +5403,17 @@ s=applyArtistMergeCompatibility(s);
 s=applyBatchRefillCompatibility(s);
 s=applyLegacyHandsCompatibility(s);
 s=applyStudioFakeArtistCompatibility(s);
+// 0.8.68：漫画可选 NAI 4.5、单独的回复长度
+s=applyComicModelTokensCompatibility(s);
+// 0.8.68：每个模型记住自己的参数
+s=applyModelParamsCompatibility(s);
+// 0.8.68：漫画自己的出图参数
+s=applyComicParamsCompatibility(s);
 s=applySiteCompatibility(s);
+// 0.8.69：固定提示词内置 118 条、三页、标签多选
+s=applyBuiltinScenesCompatibility(s);
+// 0.8.68：inset 展开成 top/right/bottom/left，修手机上漫画阅读打不开（放最后，后面加的样式也一起展开）
+s=applyInsetCompatibility(s);
 const prefix=`// Generated from the full script; edit build-extension.mjs and shared-upload.js.
 export function createRuntime() {
 let stopped = false;
@@ -5412,9 +5427,9 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.copyFileSync('src/index.js',dir+'/index.js');
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库',loading_order:100,js:'index.js',author:'if love',version:'0.8.67',homePage:'https://github.com/ruoege49-ship-it/zhiku-tavern-helper',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
-fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-tavern-helper',version:'0.8.67',private:true,type:'module'},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库',loading_order:100,js:'index.js',author:'if love',version:'0.8.69',homePage:'https://github.com/ruoege49-ship-it/zhiku-tavern-helper',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-tavern-helper',version:'0.8.69',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
 for(const key of ['piaoce_data.json','piaoce_nai','piaoce_uid','data-share-form'])assert(s.includes(key));
-console.log('Extension 0.8.67 built; storage keys and shared upload preserved.');
+console.log('Extension 0.8.69 built; storage keys and shared upload preserved.');
