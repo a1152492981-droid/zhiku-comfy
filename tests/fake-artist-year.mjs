@@ -16,7 +16,7 @@ const d=M.emptyData();const r=M.createFromString(d,{text:bad,forceGroup:true});
 const out=M.ticketString(d,r);
 assert(out.startsWith('year_2025') && out.includes('-2::artist_collaboration::') && !/artist:year|artist:artist_/.test(out),out);
 const g=s.slice(s.indexOf('function guessBareArtists'),s.indexOf('function addArtistPrefix'));
-const guess=vm.runInNewContext(g+'\nguessBareArtists',{M:{tokenize:M.tokenize,findArtistByTag:()=>null}});
+const guess=vm.runInNewContext(g+'\nguessBareArtists',{M:{fakeArtistName:M.fakeArtistName,tokenize:M.tokenize,findArtistByTag:()=>null}});
 assert.deepEqual([...guess({}, 'year_2025, 5::masterpiece::, liduke, huqu')],[]);
 console.log('PASS: year_2025 / artist_collaboration / detailed eyes stay plain words');
 // Existing saved fake artists migrate on load, retaining weighted words and images.
@@ -24,3 +24,12 @@ const legacy=M.emptyData();const ref=M.createFromString(legacy,{text:'1.4::artis
 const fake=Object.values(legacy.artists).find(a=>a.tag==='artist:legacy_word');assert(fake);fake.tag='artist:artist_collaboration';fake.images=[{url:'keep.png'}];
 const loaded=M.normalizeData(legacy);const text=M.ticketString(loaded,ref);assert(text.includes('-2::artist_collaboration::'));assert(!text.includes('artist:artist_collaboration'));assert(Object.values(loaded.groups).some(g=>g.images.some(i=>i.url==='keep.png')));
 console.log('PASS: legacy load migration preserves weight and images');
+
+const dirty='1.4::artist:chibi::, {artist:super deformed}, artist:watercolor (medium), artist:year_2025, artist:liduke, artist:realistic (person)';
+const clean='1.4::chibi::, {super deformed}, watercolor (medium), year_2025, artist:liduke, artist:realistic (person)';
+assert.equal(M.cleanFakeArtists(dirty),clean);
+assert.equal(M.cleanFakeArtists(clean),clean);
+assert.deepEqual([...guess({}, 'chibi, super deformed, incredibly absurdres, year_2025')],[]);
+assert.deepEqual([...guess({}, 'liduke, chibi')],['liduke']);
+assert(s.includes("st.pos = M.cleanFakeArtists(saved.pos ?? (d.active ? M.ticketString(d, d.active) : ''))"));
+console.log('PASS: studio fake-artist cleanup preserves weights and real names');

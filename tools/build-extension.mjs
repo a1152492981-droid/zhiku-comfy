@@ -1,3 +1,4 @@
+import {applyStudioFakeArtistCompatibility} from './studio-fake-artist-compat.mjs';
 import {applyBatchArtistFixCompatibility} from './batch-artist-fix-compat.mjs';
 import {applyArtistMergeCompatibility} from './artist-merge-compat.mjs';
 import {applyBatchRefillCompatibility} from './batch-refill-compat.mjs';
@@ -5396,6 +5397,7 @@ s=applyBatchArtistFixCompatibility(s);
 s=applyArtistMergeCompatibility(s);
 s=applyBatchRefillCompatibility(s);
 s=applyLegacyHandsCompatibility(s);
+s=applyStudioFakeArtistCompatibility(s);
 s=applySiteCompatibility(s);
 const prefix=`// Generated from the full script; edit build-extension.mjs and shared-upload.js.
 export function createRuntime() {
