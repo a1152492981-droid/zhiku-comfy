@@ -373,6 +373,7 @@ const CSS = `
 
 function createComicController(deps) {
     const { document: doc, getContext, getData, commit, generatePage, storeImage, resolveUrl, recordImage, dropImage, askLLM, notify, modal, esc } = deps;
+    const naiSize = deps.naiSize || (() => [832, 1216]);
     const win = doc.defaultView;
     const style = doc.createElement('style');
     style.id = 'pc-comic-style';
@@ -414,7 +415,7 @@ function createComicController(deps) {
     };
     const rec = (msg, key) => msg?.extra?.zhikuComic?.[key] || null;
     const curVer = r => r?.versions?.[Math.min(r.cur ?? r.versions.length - 1, r.versions.length - 1)] || null;
-    const size = () => String(opts().comicSize || '832x1216').split('x').map(Number);
+    const size = () => opts().comicSize === 'follow' ? naiSize() : String(opts().comicSize || '832x1216').split('x').map(Number);
     function style_() {
         const d = getData();
         const M = deps.model;
@@ -462,11 +463,13 @@ function createComicController(deps) {
             if (!parsed.ok) throw new Error(parsed.reason);
             const st = style_();
             const [w, h] = size();
-            const textMode = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'overlay';
+            const comfy = opts().comicBackend === 'comfy';
+            const textMode0 = ['draw', 'overlay', 'none'].includes(opts().comicText) ? opts().comicText : 'overlay';
+            const textMode = comfy && textMode0 === 'draw' ? 'overlay' : textMode0;
             const mono = opts().comicColor === 'mono' ? 'monochrome, greyscale, screentone' : '';
             const req = comicRequest(parsed, { stylePos: [st.pos, mono].filter(Boolean).join(', '), extraNeg: negativeFor(), width: w, height: h, textMode });
             running.set(job, 'run'); render(id);
-            const r = await generatePage(req);
+            const r = await generatePage(req, { backend: comfy ? 'comfy' : 'nai' });
             if (!snap.current()) return;
             const saved = await storeImage(r.image, `comic_${Date.now()}`);
             if (!saved?.url) throw new Error('漫画图片保存未返回地址');
@@ -762,6 +765,9 @@ function createComicController(deps) {
               <select class="pc-input" data-cstyle><option value="">跟正文画师串一样${d.active ? `（现在是「${esc(M.ticketName(d, d.active))}」）` : '（还没选）'}</option>
                 ${groups.map(g => `<option value="group:${esc(g.id)}" ${o.comicStyle === 'group:' + g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select>
               <div class="pc-hint">漫画单独用一个画师串，不影响聊天插图。${posBad.length ? `<br><b>⚠ 这串里有人数词：${posBad.map(esc).join('、')}</b>，人数应该由每页自己写，建议去掉。` : ''}</div>
+              <div class="pc-label">用什么画</div>
+              ${seg('comicBackend', [['nai', 'NovelAI'], ['comfy', '本地 ComfyUI']], 'nai')}
+              <div class="pc-hint">ComfyUI 用「Comfy」页选的模型、工作流和参数。分人物的提示词会合在一起发；ComfyUI 画不了字，对白会自动改成「插件叠字」。</div>
               <div class="pc-label">颜色</div>
               ${seg('comicColor', [['color', '彩色'], ['mono', '黑白网点']], 'color')}
               <div class="pc-label">对白怎么出现</div>
@@ -771,7 +777,8 @@ function createComicController(deps) {
               ${seg('comicCapSize', [['xs', '特小'], ['s', '小'], ['m', '中'], ['l', '大'], ['hide', '不显示']], 's')}
               <div class="pc-hint">挡图的话调小，或者在楼层里点「隐藏对白」临时收起。想少点对白，在下面「给 AI 的改编要求」里写「对白少一点」。</div>
               <div class="pc-label">页面尺寸（跨页自动横过来）</div>
-              ${seg('comicSize', [['832x1216', '竖'], ['1216x832', '横'], ['1024x1024', '方']], '832x1216')}
+              ${seg('comicSize', [['832x1216', '竖'], ['1216x832', '横'], ['1024x1024', '方'], ['follow', '跟生图设置']], '832x1216')}
+              <div class="pc-hint">「跟生图设置」用设置里填的宽高。步数、CFG、采样器本来就跟着设置走（NovelAI 通道）；用 ComfyUI 画时，跟着「Comfy」页的设置。</div>
               <div class="pc-label">「画成漫画」每楼画几页</div>
               ${seg('comicPages', [[0, '自动'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']], 0)}
               <div class="pc-label">每页几格</div>
@@ -1688,7 +1695,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.61（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.62（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1737,7 +1744,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.61';
+globalThis.__PC_VERSION = '0.8.62';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -2035,7 +2042,7 @@ function stripArtists(text) {
 }
 
 /** 粘贴画师名时顺手带进来的质量词、年份等，不当成画师 */
-const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year \d{4}|\d{4}|no text|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+)$/i;
+const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year[ _]\d{4}|\d{4}|no[ _]text|artist[ _]collaboration|(?:finely[ _])?detailed[ _](?:eyes|hair|face|skin|features|irises|clothes)|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+)$/i;
 /** artist:4k、artist:masterpiece 这类：带了 artist: 但明显不是画师 */
 const fakeArtistName = text => {
     const tag = String(text || '').replace(/^artist\s*:\s*/i, '').trim();
@@ -2065,7 +2072,7 @@ function parseArtistList(text) {
  * 没有 artist: → 当成一串画师名，一个个拆开。
  */
 /** 普通词（画风、质量、构图），不是画师名 */
-const BATCH_GENERAL = /^(?:\d+(?:boy|girl|other)s?|solo|male|female|nsfw|sfw|rating:.*|year \d{4}|\d{4}|newest|oldest|recent|masterpiece|absurdres|highres|lowres|very aesthetic|aesthetic|no text|uncensored|.*quality.*)$/i;
+const BATCH_GENERAL = /^(?:\d+(?:boy|girl|other)s?|solo|male|female|nsfw|sfw|rating:.*|year[ _]\d{4}|\d{4}|artist[ _]collaboration|newest|oldest|recent|masterpiece|absurdres|highres|lowres|very aesthetic|aesthetic|no text|uncensored|.*quality.*)$/i;
 const BATCH_STYLE_WORD = /\b(?:background|lighting|light|lights|detailed|details?|emphasis|style|shading|colou?rs?|composition|focus|texture|fabric|depth of field|illustration|anime|realistic|photorealistic|sketch|painting|watercolor|lineart|cinematic|atmosphere|scenery|portrait)\b/i;
 const batchNameLike = t => !/[<>:]/.test(t) && t.split(/\s+/).length <= 3 && !BATCH_GENERAL.test(t) && !BATCH_STYLE_WORD.test(t);
 /** 一个词加上 artist:（保留前面的权重） */
@@ -3427,7 +3434,7 @@ async function generateRequest(opts) {
     const brief = () => ({
         返回: siteResponseText(responseInfo),
         通道: opts.backend === 'comfy' ? 'ComfyUI' : { key: 'NovelAI 自己的 key', tavern: '酒馆里的 key', site: '第三方站点', gpt: 'OpenAI 兼容' }[s0.naiMode] || s0.naiMode,
-        模型: opts.comic ? 'nai-diffusion-5-full（漫画）' : s0.novelaimode, 尺寸: `${opts.width || s0.novelai_width}×${opts.height || s0.novelai_height}`,
+        模型: opts.backend === 'comfy' ? (String(s0.comfyModel || '').trim() || '自定义工作流') + (opts.comic ? '（漫画）' : '') : opts.comic ? 'nai-diffusion-5-full（漫画）' : s0.novelaimode, 尺寸: `${opts.width || s0.novelai_width}×${opts.height || s0.novelai_height}`,
         来源: logSource,
         正面: opts.positive, 负面: opts.negative,
         分人物: (opts.chars || []).map((c, i) => `${i + 1}. ${c.prompt}${c.center ? ` @${c.center.x},${c.center.y}` : ''}`),
@@ -5342,16 +5349,27 @@ function descOf(c) {
     return [...stCards({ all: true }), ...stPersonas({ all: true })].find(x => x.key === c.key)?.desc || '';
 }
 /** 读人设用：描述、性格、场景、卡里的世界书、绑定的世界书都拿来；配角只拿提到它名字的世界书条目 */
-async function descOfFull(c, { all = false } = {}) {
+async function descOfFull(c, { all = false, choose = null } = {}) {
     const cx = ctx();
     const parts = [];
     const used = [];
     const add = (title, text) => { text = String(text || '').trim(); if (text) parts.push(`【${title}】\n${text}`); };
+    const cands = [];
     const fromBook = (title, entries, name) => {
         const list = (Array.isArray(entries) ? entries : Object.values(entries || {}))
             .filter(e => e && !e.disable && e.enabled !== false && String(e.content || '').trim());
-        const picked = name ? list.filter(e => [e.comment, e.content, ...(e.key || e.keys || [])].some(x => String(x || '').includes(name))) : list;
-        for (const e of picked) add(`${title}：${e.comment || (e.key || e.keys || []).join('、') || '条目'}`, e.content);
+        for (const e of list) cands.push({ title, e, auto: !name || [e.comment, e.content, ...(e.key || e.keys || [])].some(x => String(x || '').includes(name)) });
+    };
+    // 把候选条目真正加进设定：没让挑就加默认那些；让挑就弹出来勾
+    const flush = async () => {
+        let use = cands.filter(x => x.auto);
+        if (choose && cands.length) {
+            const sel = await choose(cands.map(x => ({ title: x.title, name: x.e.comment || (x.e.key || x.e.keys || []).join('、') || '条目', content: String(x.e.content || ''), auto: x.auto })), c);
+            if (!sel) throw Object.assign(new Error('没选条目'), { name: 'AbortError' });
+            use = cands.filter((_, i) => sel.has(i));
+        }
+        for (const x of use) add(`${x.title}：${x.e.comment || (x.e.key || x.e.keys || []).join('、') || '条目'}`, x.e.content);
+        cands.length = 0;
     };
     const loadBook = async name => {
         if (!name) return null;
@@ -5376,6 +5394,7 @@ async function descOfFull(c, { all = false } = {}) {
         const pd = (cx.powerUserSettings || {}).persona_descriptions?.[String(c.key).replace(/^user:/, '')] || {};
         add('人设', pd.description);
         fromBook('人设世界书', await loadBook(pd.lorebook), parts.length ? c.name : '');
+        await flush();
     } else {
         const side = c.kind === 'side';
         const card = await fullCard(side ? c.card : c.avatar);
@@ -5400,6 +5419,7 @@ async function descOfFull(c, { all = false } = {}) {
             names.delete(bound);
             for (const n of names) { fromBook(`世界书「${n}」`, await loadBook(n), ''); used.push(`世界书「${n}」`); }
         }
+        await flush();
         if (!side && !hadCard) add('开场白', card?.first_mes || dd.first_mes);
         globalThis.__zkLog?.('读设定', `${c.name}：${all ? '整本' : '只要提到名字的'} · 共 ${parts.join('').length} 字`, `来源：卡的描述/性格/场景${hadCard ? '' : '（空的）'}；${used.join('，') || '没有世界书'}\n分段：${parts.map(x => x.split('\n')[0]).join('，').slice(0, 1500)}`);
     }
@@ -6976,7 +6996,7 @@ function paramFields(s, { withSize = false } = {}) {
 
 /** 没写 artist: 的画师名：开头一串名字（遇到普通词就停），加上画师库里已有的名字 */
 function guessBareArtists(d, text) {
-    const GENERAL = /^(\d+(boy|girl|other)s?|solo|male|female|nsfw|sfw|rating:.*|year \d{4}|\d{4}|newest|oldest|recent|early|mid|late|masterpiece|absurdres|highres|lowres|very aesthetic|aesthetic|no[ _]text|artist[ _]collaboration|uncensored|censored|.*quality.*|ultra[ -_]?detailed)$/i;
+    const GENERAL = /^(\d+(boy|girl|other)s?|solo|male|female|nsfw|sfw|rating:.*|year[ _]\d{4}|\d{4}|newest|oldest|recent|early|mid|late|masterpiece|absurdres|highres|lowres|very aesthetic|aesthetic|no[ _]text|artist[ _]collaboration|uncensored|censored|.*quality.*|ultra[ -_]?detailed)$/i;
     const nameLike = t => !/\s/.test(t) || /^[^\s()]+ \((?!medium|style)[^()]+\)$/i.test(t);
     const out = [];
     let lead = true;
@@ -8323,6 +8343,42 @@ function charTestResult(c) {
     const r = ui.charTestResult;
     return r && r.key === c?.key && r.data === getData() && r.image === ui.charTestImg ? r : null;
 }
+/** 挑世界书条目：list = [{ title, name, content, auto }]，返回选中的下标 Set；取消返回 null */
+function pickWiEntries(list, c) {
+    return new Promise(resolve => {
+        const sel = new Set(list.map((x, i) => x.auto ? i : -1).filter(i => i >= 0));
+        let q = '';
+        const box = modal(`<h3 class="pc-h3">挑要发给 AI 的世界书条目</h3>
+          <div class="pc-dim small">读「${esc(c?.name || '')}」的设定。默认勾好的是插件原本会发的（只要提到名字的那些）。勾得越多越准，但越长越慢、越贵。</div>
+          <label class="pc-search pc-mt-s"><span class="pc-sr">搜条目</span>${ICON.search}<input data-wq placeholder="搜条目名或内容"></label>
+          <div class="pc-chips wrap" style="margin-top:6px"><button class="pc-pill dashed tiny" data-wa="all">全选</button><button class="pc-pill dashed tiny" data-wa="none">全不选</button><button class="pc-pill dashed tiny" data-wa="auto">回到默认</button><button class="pc-pill dashed tiny" data-wa="shown">只选搜到的</button></div>
+          <div data-wl style="max-height:48vh;overflow:auto;margin-top:8px"></div>
+          <div class="pc-dim small" data-wc style="margin-top:6px"></div>
+          <div class="pc-actions"><button class="pc-btn" data-wa="no">算了</button><button class="pc-btn dark" data-wa="ok">用这些读</button></div>`);
+        const shown = () => list.map((x, i) => i).filter(i => !q || (list[i].title + list[i].name + list[i].content).toLowerCase().includes(q));
+        const draw = () => {
+            let last = '';
+            box.querySelector('[data-wl]').innerHTML = shown().map(i => { const x = list[i]; const head = x.title !== last ? `<div class="pc-label" style="margin:10px 0 4px">${esc(x.title)}</div>` : ''; last = x.title;
+                return head + `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 2px;border-bottom:1px dashed var(--pc-dash);cursor:pointer"><input type="checkbox" data-wi="${i}" ${sel.has(i) ? 'checked' : ''} style="margin-top:3px"><span class="pc-grow"><b style="font-size:13.5px">${esc(x.name)}</b>${x.auto ? ' <small class="pc-dim">· 提到了</small>' : ''}<small class="pc-dim" style="display:block;line-height:1.5">${esc(x.content.slice(0, 70))}${x.content.length > 70 ? '…' : ''}（${x.content.length} 字）</small></span></label>`; }).join('') || '<div class="pc-dim small">没有搜到</div>';
+            const chars = [...sel].reduce((n, i) => n + list[i].content.length, 0);
+            box.querySelector('[data-wc]').textContent = `选了 ${sel.size} / ${list.length} 条，约 ${chars} 字${chars > 60000 ? '（超过 6 万字，后面的会被截掉）' : ''}`;
+        };
+        box.addEventListener('input', ev => { if (ev.target.matches('[data-wq]')) { q = ev.target.value.trim().toLowerCase(); draw(); } });
+        box.addEventListener('change', ev => { const i = ev.target.dataset?.wi; if (i == null) return; ev.target.checked ? sel.add(Number(i)) : sel.delete(Number(i)); draw(); });
+        box.addEventListener('click', ev => {
+            const a = ev.target.closest('[data-wa]')?.dataset.wa; if (!a) return;
+            if (a === 'no') { box.closeModal(); resolve(null); return; }
+            if (a === 'ok') { box.closeModal(); resolve(sel); return; }
+            if (a === 'all') list.forEach((_, i) => sel.add(i));
+            if (a === 'none') sel.clear();
+            if (a === 'auto') { sel.clear(); list.forEach((x, i) => x.auto && sel.add(i)); }
+            if (a === 'shown') { sel.clear(); shown().forEach(i => sel.add(i)); }
+            draw();
+        });
+        box.parentElement?.addEventListener('click', ev => { if (ev.target === box.parentElement) resolve(null); });
+        draw();
+    });
+}
 function viewCharEdit(d) {
     const c = C.getChar(ui.charKey);
     if (!c) { ui.view = 'cast'; return viewCast(d); }
@@ -8341,7 +8397,7 @@ function viewCharEdit(d) {
       <div class="pc-row-between"><b>固定外貌</b><span class="pc-chips" style="margin:0">${c.kind !== 'free' ? `<button class="pc-pill dashed tiny" data-act="readcard" ${busy ? 'disabled' : ''}>${busy === 'read' ? '读取中…' : c.kind === 'user' ? '从人设读' : c.kind === 'side' ? '从卡和世界书读' : '从角色卡读'}</button>` : ''}<label class="pc-pill dashed tiny">${busy === 'look' ? '<span class="pc-busy">看图中</span>' : '从图片读'}<input type="file" accept="image/*" data-lookimg hidden></label></span></div>
       <div class="pc-dim small">头发、眼睛、脸、身材这类不会变的。第一个写 1boy 或 1girl。点标签可以改，× 删掉。</div>
       ${c.kind !== 'free' ? `<details class="pc-fold pc-mt-s" data-cfold="readnote" ${c.readNote || ui.readNoteOpen ? 'open' : ''}><summary><b>读之前补几句</b><i>${c.readNote ? '读的时候会带上' : c.kind === 'user' ? '人设写得少就在这补' : '卡里写得少就在这补'}</i></summary><div class="pc-fold-in"><textarea class="pc-textarea small" data-readnote placeholder="比如：黑色长直发，左眼下有泪痣，185cm，身材偏瘦，总戴银框眼镜">${esc(c.readNote || '')}</textarea><div class="pc-dim small">写完点上面的「${c.kind === 'user' ? '从人设读' : c.kind === 'side' ? '从卡和世界书读' : '从角色卡读'}」，AI 会把这段和${c.kind === 'user' ? '人设' : '卡'}里的设定一起读。只想直接加几个标签，用下面「自己加」那一栏。</div></div></details>` : ''}
-      ${c.kind === 'char' || c.kind === 'side' ? `<button class="pc-pill dashed tiny pc-mt-s" data-act="readcast" ${busy ? 'disabled' : ''}>${busy === 'cast' ? '<span class="pc-busy">读取中</span>' : '读出这张卡里所有人（含世界书）'}</button><button class="pc-pill dashed tiny pc-mt-s" style="margin-left:6px" data-act="readchatcast" ${busy ? 'disabled' : ''}>${busy === 'chatcast' ? '<span class="pc-busy">读取中</span>' : '从聊天正文读出人物（最近 40 楼）'}</button>` : ''}
+      ${c.kind === 'char' || c.kind === 'side' ? `<button class="pc-pill dashed tiny pc-mt-s" data-act="readcast" ${busy ? 'disabled' : ''}>${busy === 'cast' ? '<span class="pc-busy">读取中</span>' : '读出这张卡里所有人（含世界书）'}</button><button class="pc-pill dashed tiny pc-mt-s" style="margin-left:6px" data-act="readchatcast" ${busy ? 'disabled' : ''}>${busy === 'chatcast' ? '<span class="pc-busy">读取中</span>' : '从聊天正文读出人物（最近 40 楼）'}</button><label class="pc-switch pc-mt-s"><input type="checkbox" data-pickwi ${d.options.pickWi ? 'checked' : ''}><span></span>读之前自己挑世界书条目<small>点「从角色卡读」「读出这张卡里所有人」时先列出世界书条目，勾哪几条就发哪几条</small></label>` : ''}
       <label class="pc-field pc-mt-s"><span>别名（逗号隔开）· 图片角色标记可使用名字或别名</span><input data-charalias value="${esc(c.aliases || '')}" placeholder="比如 小秋，秋秋"></label>
       <label class="pc-switch pc-mt-s"><input type="checkbox" data-charcanon ${c.canonOn ? 'checked' : ''}><span></span>同人角色：直接写原作角色名<small>原作里有的角色，写 danbooru 上的角色名，NovelAI 认得就会照原作的长相画。打开后外貌只发性别词 + 角色名，衣服照常。</small></label>
       ${c.canonOn ? `<label class="pc-field"><span>角色名标签（英文，可以带作品名）</span><input class="mono" data-charcanontag value="${esc(c.canonTag || '')}" placeholder="hatsune miku, vocaloid"></label>
@@ -8595,7 +8651,8 @@ async function charAction(act, el) {
                     people = await T.extractCastFromChat(main.name, text);
                     if (!people.length) { toastr.warning('AI 没在最近的正文里找到写了外貌的人', '角色'); return true; }
                 } else {
-                const desc = await C.descOfFull(main, { all: true });
+                const desc = await C.descOfFull(main, { all: true, choose: getData().options.pickWi ? pickWiEntries : null }).catch(e => { if (e?.name === 'AbortError') return null; throw e; });
+                if (desc === null) { ui.charBusy = ''; render(); return true; }
                 if (!desc.trim()) { toastr.warning('描述、性格、场景、世界书里都没找到设定', '角色'); return true; }
                 people = await T.extractCast(main.name, desc);
                 }
@@ -8646,7 +8703,8 @@ async function charAction(act, el) {
             ui.charBusy = 'read'; render();
             const readNote = String(root.querySelector('[data-readnote]')?.value ?? c.readNote ?? '').trim();
             if (readNote !== String(c.readNote || '')) { c.readNote = readNote; save(); }
-            const descRaw = await C.descOfFull(c).catch(() => '');
+            const descRaw = await C.descOfFull(c, { choose: getData().options.pickWi ? pickWiEntries : null }).catch(e => e?.name === 'AbortError' ? null : '');
+            if (descRaw === null) { ui.charBusy = ''; render(); return true; }
             const desc = readNote ? [descRaw, `【用户补充的外貌设定，以这段为准】\n${readNote}`].filter(x => String(x).trim()).join('\n\n') : descRaw;
             ui.charBusy = ''; render();
             if (!desc.trim()) { toastr.warning(c.kind === 'side' ? `卡和世界书里都没提到「${c.name}」，可以在下面手动填外貌` : '描述、性格、场景、世界书里都没找到设定，可以在下面手动填外貌', '角色', { timeOut: 6000 }); return true; }
@@ -10947,6 +11005,7 @@ async function onChangeEv(ev) {
         render();
         return;
     }
+    if (el.dataset.pickwi !== undefined) { getData().options.pickWi = el.checked; commit({ silent: true }); return; }
     if (el.dataset.outadd !== undefined) {
         const files = [...(el.files || [])].slice(0, 6); el.value = '';
         const u = ui.outfit;
@@ -12802,7 +12861,7 @@ async function start() {
     cleanups.push(() => { illustrationPlanner.stop(); illustrationLastRequest = null; });
     const comic = createComicController({
         document: DOC, getContext: () => SillyTavern.getContext(), getData, commit: () => __mod_store.commit({ silent: true }), model: __mod_model,
-        generatePage: req => N.generate({ ...req, comic: true }), storeImage: pcStoreImage, resolveUrl: u => pcLocal.url(u), dropImage: pcDropImage,
+        generatePage: (req, o = {}) => N.generate({ ...req, comic: true, ...(o.backend === 'comfy' ? { backend: 'comfy', src: '漫画' } : { src: '漫画' }) }), naiSize: () => { const s = N.settings(); return [Number(s.novelai_width) || 832, Number(s.novelai_height) || 1216]; }, storeImage: pcStoreImage, resolveUrl: u => pcLocal.url(u), dropImage: pcDropImage,
         recordImage: shot => pcRecordImage(shot), askLLM: (s, u, o) => __mod_translate.askLLM(s, u, { ...o, fn: 'comic' }),
         castText: () => __mod_chars.currentCast().filter(x => x.on || (x.char.appearance || []).length).map(x => `${x.char.name}：${__mod_chars.fixedTags(x.char) || '（还没写外貌，按正文描写画）'}`).join('\n'),
         notify: m => toastr.info(m, '智库 · 漫画', { timeOut: 1500 }), notifyError: m => toastr.error(m, '智库 · 漫画', { timeOut: 9000 }), naiMode: () => N.settings().naiMode, modal: UI.modal, esc: UI.esc,

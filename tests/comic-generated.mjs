@@ -43,3 +43,10 @@ for(const action of ['off','extract','on','toggle']){
  h.ctrl.stop();
 }
 console.log('PASS: generated comic automatic source controls, once per chat and switch-off during adaptation.');
+// Test the generated controller: follow-size and backend reach the generation request.
+for (const backend of ['nai','comfy']) {
+ let request,route;
+ const h=harness({getData:()=>({options:{comicOn:true,comicAuto:true,comicSize:'follow',comicBackend:backend,comicText:'draw'}}),naiSize:()=>[768,1344],generatePage:async(req,opt)=>{request=req;route=opt;return {image:'image'}}});
+ await h.ctrl.generateOne(0,block);assert.equal(route.backend,backend);assert.equal(request.width,768);assert.equal(request.height,1344);assert.equal(h.msg.extra.zhikuComic[block.key].versions.at(-1).textMode,backend==='comfy'?'overlay':'draw');h.ctrl.stop();
+}
+console.log('PASS: generated comic backend and follow-size requests');

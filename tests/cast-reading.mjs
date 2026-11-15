@@ -42,3 +42,11 @@ loaded.length=0;desc=await C.descOfFull(main,{all:true});for(const name of ['Ali
 selected=['Missing'];await C.descOfFull(main,{all:true});assert(logs.some(x=>JSON.stringify(x).includes('读取失败')));
 card.description='x'.repeat(61000);desc=await C.descOfFull(main,{all:true});assert.equal(desc.length,60000);assert.match(notices.at(-1),/60000/);
 console.log('PASS: blocked-response fallback, merged aliases, ordinary-only output, no network/server/abort retries, accurate partial/empty results, complete selected worldbooks, disabled filtering, failure diagnostics and truncation notice');
+// Explicit worldbook selection affects collected text; cancel must abort before extraction.
+card.description='Alice: black hair';selected=['Global'];let candidates;
+desc=await C.descOfFull(main,{all:true,choose:async list=>{candidates=list;return new Set(list.map((x,i)=>x.name==='Carol'?i:-1).filter(i=>i>=0));}});
+assert(candidates.some(x=>x.name==='Dan'));assert(!candidates.some(x=>x.name==='Hidden'));
+assert(desc.includes('Carol: green eyes'));assert(!desc.includes('Bob:'));assert(!desc.includes('Dan:'));assert(!desc.includes('Alice: blue eyes'));
+desc=await C.descOfFull(main,{all:true,choose:async()=>new Set()});assert.equal(desc,'【描述】\nAlice: black hair');
+await assert.rejects(()=>C.descOfFull(main,{choose:async()=>null}),{name:'AbortError'});
+console.log('PASS: selected worldbook text, empty selection and cancel');
