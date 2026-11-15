@@ -2082,12 +2082,15 @@ function stripArtists(text) {
 }
 
 /** 粘贴画师名时顺手带进来的质量词、年份等，不当成画师 */
-const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year[ _]\d{4}|\d{4}|no[ _]text|artist[ _]collaboration|chibi|chibi[ _]inset|chibi[ _]only|super[ _]deformed|deformed|oversized[ _]head|small[ _]body|big[ _]head|[23]-head-tall|multiple[ _]views|incredibly[ _]absurdres|clean[ _]rendering|[\w -]+[ _]emphasis|[\w -]+[ _]rendering|semi-realistic[ _]skin|full[ _]color|anime[ _]coloring|flat[ _]color|stunning[ _]quality|high[ _]resolution|(?:finely[ _])?detailed[ _](?:eyes|hair|face|skin|features|irises|clothes)|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+)$/i;
+const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year[ _]\d{4}|\d{4}|no[ _]text|artist[ _]collaboration|chibi|chibi[ _]inset|chibi[ _]only|super[ _]deformed|deformed|oversized[ _]head|small[ _]body|big[ _]head|[23]-head-tall|multiple[ _]views|incredibly[ _]absurdres|clean[ _]rendering|[\w -]+[ _]emphasis|[\w -]+[ _]rendering|semi-realistic[ _]skin|full[ _]color|anime[ _]coloring|flat[ _]color|stunning[ _]quality|high[ _]resolution|(?:finely[ _])?detailed[ _](?:eyes|hair|face|skin|features|irises|clothes)|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+|mini[ _]person|flat[ _]colou?r|lineart|line[ _]art|no[ _]lineart|monochrome|greyscale|sketch|simple[ _]background|white[ _]background|cel[ _]shading|watercolor(?:[ _]\(medium\))?|traditional[ _]media|pixel[ _]art|realistic|photorealistic|3d|thick[ _]outlines)$/i;
 /** artist:4k、artist:masterpiece 这类：带了 artist: 但明显不是画师 */
 const fakeArtistName = text => {
     const tag = String(text || '').replace(/^artist\s*:\s*/i, '').trim();
     return NOT_ARTIST.test(tag) || /^(?:(?:ultra|very|highly|extremely|hyper)[ _-]?)?detailed$|^(?:illustration|anime(?: style)?|best|quality)$/i.test(tag) || /[<>]/.test(tag);
 };
+
+/** 清理误加的画师前缀，保留原有权重及真正的画师名。 */
+const cleanFakeArtists = text => String(text || '').replace(/\bartist\s*:\s*([^,:{}\[\]()\n]+(?:\([^()\n]*\))?)/gi, (m, n) => fakeArtistName(n) ? n.trim() : m);
 
 /** 把一串画师名（换行或逗号隔开）拆成一个个画师 */
 function parseArtistList(text) {
@@ -2276,7 +2279,7 @@ function ticketString(data, ref) {
     if (!t) return '';
     if (t.type === 'artist') return t.item.tag;
     // 用户写的那串原样发：{artist:a}、1.2::a, b::、顺序、小数位都不动
-    if (rawStillValid(data, t.item)) return t.item.raw.replace(/\bartist\s*:\s*([^,:{}\[\]()\n]+)/gi, (m, n) => fakeArtistName(n) ? n.trim() : m);
+    if (rawStillValid(data, t.item)) return cleanFakeArtists(t.item.raw);
     const parts = t.item.members
         .map(m => ({ a: data.artists[m.artistId], w: Number(m.weight) || 1 }))
         .filter(x => x.a)
@@ -2403,7 +2406,7 @@ function groupBanned(data, g) {
     return (g.members || []).map(m => data.artists[m.artistId]).filter(a => a && banInfo(data, a.tag));
 }
 
-return { DATA_VERSION, SHOTS, DEFAULT_TEMPLATES, shotOf, emptyData, normalizeData, uid, artistKey, normalizeArtistTag, fmtWeight, tokenize, parseArtistString, stripArtists, parseArtistList, parseBatchLines, findArtistByTag, ensureArtist, createFromString, overwriteGroup, groupsContaining, deleteArtist, deleteGroup, resolveTicket, ticketName, ticketString, ticketNeg, ticketCover, touchRecent, sameRef, rotationPool, nextInRotation, replaceArtists, findTicketForString, mergeTags, banInfo, setBan, unBan, bannedIn, groupBanned };
+return { DATA_VERSION, fakeArtistName, cleanFakeArtists, SHOTS, DEFAULT_TEMPLATES, shotOf, emptyData, normalizeData, uid, artistKey, normalizeArtistTag, fmtWeight, tokenize, parseArtistString, stripArtists, parseArtistList, parseBatchLines, findArtistByTag, ensureArtist, createFromString, overwriteGroup, groupsContaining, deleteArtist, deleteGroup, resolveTicket, ticketName, ticketString, ticketNeg, ticketCover, touchRecent, sameRef, rotationPool, nextInRotation, replaceArtists, findTicketForString, mergeTags, banInfo, setBan, unBan, bannedIn, groupBanned };
 })();
 
 // ───── store.js ─────
@@ -6774,7 +6777,7 @@ function loadStudio() {
     if (st.loaded) return;
     const d = getData();
     const saved = d.studio || {};
-    st.pos = saved.pos ?? (d.active ? M.ticketString(d, d.active) : '');
+    st.pos = M.cleanFakeArtists(saved.pos ?? (d.active ? M.ticketString(d, d.active) : ''));
     const exact = Object.values(d.groups).find(g => M.ticketString(d, {type:'group',id:g.id}).trim() === st.pos.trim() && String(g.neg || '').trim() === String(saved.neg || '').trim());
     st.sourceRef = M.resolveTicket(d, saved.sourceRef) ? { ...saved.sourceRef }
         : saved.sourceRef === undefined ? (saved.pos == null && d.active ? { ...d.active } : exact ? {type:'group',id:exact.id} : null) : null;
@@ -7185,6 +7188,7 @@ function guessBareArtists(d, text) {
     for (const t of M.tokenize(text)) {
         if (t.isArtist) continue;
         const name = t.text.trim();
+        if (M.fakeArtistName(name)) { lead = false; continue; }
         const known = !!M.findArtistByTag(d, 'artist:' + name);
         if (lead && (GENERAL.test(name) || !nameLike(name))) lead = false;
         if ((lead || known) && !GENERAL.test(name) && !name.includes(":") && /[\p{L}\p{N}]/u.test(name) && !out.includes(name)) out.push(name);
