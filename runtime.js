@@ -1695,7 +1695,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.63（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.65（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1744,7 +1744,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.63';
+globalThis.__PC_VERSION = '0.8.65';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -2779,6 +2779,58 @@ async function call(path, { method = 'GET', body } = {}) {
 }
 
 const lobbyImgUrl = u => (u && u.startsWith('/') ? serverBase() + u : u);
+/** 列表用的小图：原图下载一次、缩到 480 宽的 jpg，存成 blob 网址；同一时间最多下 4 张 */
+const thumbCache = new Map(), thumbWait = [], THUMB_MAX = 400;
+let thumbBusy = 0, thumbStopped = false;
+const thumbPending = new Set(), thumbControllers = new Set();
+function cacheThumb(url, value) {
+    thumbCache.set(url, value);
+    while (thumbCache.size > THUMB_MAX) { const [k, v] = thumbCache.entries().next().value; if (v?.startsWith('blob:')) URL.revokeObjectURL(v); thumbCache.delete(k); }
+}
+function stopThumbs() {
+    thumbStopped = true; thumbWait.length = 0; thumbPending.clear();
+    for (const c of thumbControllers) c.abort(); thumbControllers.clear();
+    for (const v of thumbCache.values()) if (v?.startsWith('blob:')) URL.revokeObjectURL(v);
+    thumbCache.clear();
+}
+function thumbPump() {
+    while (!thumbStopped && thumbBusy < 4 && thumbWait.length) {
+        const url = thumbWait.shift();
+        thumbBusy++;
+        makeThumb(url).then(t => {
+            if (thumbStopped) { if (t?.startsWith('blob:')) URL.revokeObjectURL(t); return; }
+            cacheThumb(url, t);
+            for (const el of DOC.querySelectorAll('img[data-lthumb]')) if (el.dataset.lthumb === url) { el.src = t; el.classList.add('pc-thumb-in'); }
+        }).catch(() => { if (thumbStopped) return; cacheThumb(url, url); for (const el of DOC.querySelectorAll('img[data-lthumb]')) if (el.dataset.lthumb === url) el.src = url; })
+            .finally(() => { thumbPending.delete(url); thumbBusy--; thumbPump(); });
+    }
+}
+async function makeThumb(url) {
+    const controller = new AbortController(); thumbControllers.add(controller);
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error('图片 HTTP ' + response.status);
+    const blob = await response.blob();
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, 480 / bmp.width);
+    if (scale === 1 && blob.size < 300000) { bmp.close?.(); return URL.createObjectURL(blob); }
+    const c = DOC.createElement('canvas');
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const small = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+    return URL.createObjectURL(small || blob);
+    } finally { clearTimeout(timer); thumbControllers.delete(controller); }
+}
+/** 卡片里的 <img> 属性：有小图直接用，没有就先空着，等小图做好再填进去 */
+function lobbyThumbAttr(u) {
+    const url = lobbyImgUrl(u);
+    const hit = thumbCache.get(url);
+    if (!thumbStopped && !hit && !thumbPending.has(url)) { thumbPending.add(url); thumbWait.push(url); setTimeout(thumbPump, 0); }
+    const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    return `data-lthumb="${esc(url)}" ${hit ? `src="${esc(hit)}" class="pc-thumb-in"` : ''}`;
+}
 
 const health = () => call('/health');
 const listPosts = ({ sort = 'new', tag = '', kind = '', q = '', nsfw = false, mine = false, offset = 0, limit = 20 } = {}) =>
@@ -2793,7 +2845,7 @@ const deletePost = id => call(`/lobby/posts/${id}`, { method: 'DELETE' });
 /** 改自己分享的：服务器支持 PUT 就直接改；不支持的话由调用方重新上传 */
 const updatePost = (id, body) => call(`/lobby/posts/${id}`, { method: 'PUT', body });
 
-return { serverBase, lobbyImgUrl, health, listPosts, listTags, createPost, likePost, copyPost, reportPost, deletePost, updatePost };
+return { serverBase, lobbyImgUrl, lobbyThumbAttr, stopThumbs, health, listPosts, listTags, createPost, likePost, copyPost, reportPost, deletePost, updatePost };
 })();
 
 // ───── nai.js ─────
@@ -4137,10 +4189,12 @@ async function makeBatchImage(job) {
         : /^(full body|standing|feet|barefoot|wide shot|very wide shot)$|\b(shoes|boots|loafers|sneakers|heels|sandals|slippers|socks|kneehighs|thighhighs|pantyhose|legwear|footwear|leggings)\b/i;
     const cut = t => M.tokenize(t || '').filter(x => !CUT.test(x.text.trim())).map(x => x.raw || (Math.abs(x.weight - 1) < 0.001 ? x.text : `${M.fmtWeight(x.weight)}::${x.text}::`)).join(', ');
     const builtIn = /^(?:sfw|nsfw)_(?:head|bust|full)$/.test(tpl.id);
+    const frame = d.options.frameKeep ? '' : __mod_chars.frameOf([fixed, builtIn ? SHOT[shot] : tpl.positive].filter(Boolean).join(', '));
+    job = { ...job, charTags: __mod_chars.frameTrim(job.charTags, frame).text };
     const pos = builtIn
         ? M.mergeTags(cut(fixed), tpl.nsfw ? 'nsfw, adult' : '', cut(job.charTags), 'solo', SHOT[shot] || SHOT.bust, 'simple background, white background')
         : M.mergeTags(fixed, job.charTags, tpl.positive);
-    const neg = [neg0, job.charNeg, 'text, watermark, signature, multiple views', builtIn ? '' : tpl.negative].filter(Boolean).join(', ');
+    const neg = [neg0, job.charNeg, 'text, watermark, signature, multiple views', builtIn ? '' : tpl.negative, frame && frame.chibi ? __mod_chars.CHIBI_NEG : ''].filter(Boolean).join(', ');
     const { positive, negative } = composeStudio({ pos, neg });
     const W = builtIn ? ({ head: [1024, 1024], bust: [896, 1152], full: [768, 1344] }[shot] || [896, 1152]) : [Number(tpl.width) || undefined, Number(tpl.height) || undefined];
     const o = d.options;
@@ -5493,6 +5547,7 @@ function setCastOn(key, on) {
 const tagText = list => (list || []).map(t => t.en).filter(Boolean).join(', ');
 function currentOutfit(c) { return c.outfits.find(o => o.id === c.outfitId) || c.outfits[0] || null; }
 /** 这个角色固定会发的标签（外貌 + 固定的衣服） */
+const fixedTagsAll = (...a) => fixedTags(...a);
 function fixedTags(c, { nsfw = false } = {}) {
     const parts = [lookTags(c)];
     // NSFW 身体：只有这张图是 NSFW 时才加
@@ -5539,12 +5594,57 @@ function canSplit() {
  * scene：AI 写的场景；picks：[{ char, tags, x, y }]
  */
 const hasNsfwRating = text => M.tokenize(String(text || '').replace(/[;\n]/g, ',')).some(t => t.text.trim().toLowerCase() === 'nsfw');
+/** 看镜头删词：正面、固定提示词写了只拍头 / 上半身 / 到大腿，角色里拍不到的身体部位和衣服就不发；
+ *  写了 chibi（QQ人）时，角色里尖脸、身材、身高这些跟大头小身子打架的词也不发。
+ *  只删角色页存的外貌、身材和衣服，自己在正面里写的词一个都不动。 */
+const FRAME_RULES = {
+    full: /^(?:full body|wide shot|very wide shot|lower body|feet|foot focus|feet focus|legs|leg focus|ass focus|thigh focus)$/,
+    cowboy: /^(?:cowboy shot|thigh up|thighs up|knee up|knees up)$/,
+    upper: /^(?:upper body|bust shot|waist up|chest up|medium shot)$/,
+    head: /^(?:portrait|close-?up|extreme close-?up|face focus|headshot|head shot|id photo|passport photo|head and shoulders|bust portrait|face only)$/,
+};
+const FRAME_NAME = { cowboy: '画到大腿', upper: '画上半身', head: '画头像' };
+const CHIBI_ON = /^(?:chibi|super deformed|chibi only|[23]-head-tall|deformed proportions)$/;
+const W = s => new RegExp(`(?:^|\\s)(?:${s})(?:\\s|$)`);
+const FRAME_FEET = W('feet|foot|toes?|soles?|ankles?|barefoot|shoes?|boots?|heels|high heels|sandals?|sneakers?|loafers?|slippers?|socks?|kneehighs?|footwear|legwear');
+const FRAME_LOWER = W('tall|tall female|tall male|very tall|hips?|thighs?|thigh gap|legs?|knees?|calf|calves|ass|butt|buttocks|crotch|groin|lower body|pubic hair|penis|pussy|vagina|testicles|bulge|skirt|miniskirt|pants|trousers|shorts|jeans|leggings|pantyhose|stockings?|thighhighs|garter belt|garter straps|panties|underwear|briefs|boxers|fundoshi|hakama|long dress|maxi dress|belt');
+const FRAME_BODY = W('breasts?|cleavage|underboob|sideboob|nipples?|areolae|chest|pectorals|abs|navel|midriff|stomach|belly|waist|narrow waist|curvy|voluptuous|hourglass figure|plump');
+/** QQ人：脸型、五官比例、身材、身高这类会把大头小身子拉回正常比例的词 */
+const CHIBI_DROP = W('sharp face|pointed chin|slender face|thin face|narrow face|long face|angular face|oval face|sharp jawline|jawline|defined jawline|defined cheekbones|high cheekbones|cheekbones|hollow cheeks|mature face|adult face|narrow eyes|small eyes|small pupils|adam\'s apple|long neck|slender neck|thick neck|mature female|mature male|milf|dilf|muscular|muscular male|muscular female|toned|toned male|toned female|lean|lean muscular|slender|skinny|thin|tall|tall female|tall male|very tall|broad shoulders|wide shoulders|long legs|long arms|long torso|large breasts|huge breasts|gigantic breasts|wide hips|thick thighs|curvy|voluptuous|hourglass figure|pectorals|abs|biceps|veins|narrow waist|realistic proportions');
+const frameWords = text => M.tokenize(String(text || '')).filter(t => t.weight > 0 && !t.isArtist).map(t => String(t.text || '').toLowerCase().replace(/_/g, ' ').replace(/^artist\s*:\s*/, '').trim());
+/** 正面里写的是哪种镜头；写了全身、腿、脚之类就当全身，不删。chibi 单独标出来 */
+function frameOf(text) {
+    const words = frameWords(text);
+    const has = k => words.some(w => FRAME_RULES[k].test(w));
+    const shot = has('full') ? '' : has('cowboy') ? 'cowboy' : has('upper') ? 'upper' : has('head') ? 'head' : '';
+    const chibi = words.some(w => CHIBI_ON.test(w));
+    return shot || chibi ? { shot, chibi } : '';
+}
+/** 按镜头和 QQ人 删掉不该发的词，返回 { text, dropped } */
+function frameTrim(text, frame) {
+    const src = String(text || '');
+    if (!frame || !src.trim()) return { text: src, dropped: [] };
+    const { shot, chibi } = typeof frame === 'string' ? { shot: frame, chibi: false } : frame;
+    const dropped = [], kept = [];
+    for (const t of M.tokenize(src)) {
+        const w = String(t.text || '').toLowerCase().replace(/_/g, ' ').trim();
+        const out = (shot && FRAME_FEET.test(w)) || ((shot === 'upper' || shot === 'head') && FRAME_LOWER.test(w)) || (shot === 'head' && FRAME_BODY.test(w)) || (chibi && CHIBI_DROP.test(w));
+        const raw = t.raw || (Math.abs(t.weight - 1) < 0.001 ? t.text : `${M.fmtWeight(t.weight)}::${t.text}::`);
+        (out ? dropped : kept).push(out ? t.text : raw);
+    }
+    return { text: kept.join(', '), dropped };
+}
+const frameName = f => !f ? '' : [f.shot ? FRAME_NAME[f.shot] : '', f.chibi ? '画QQ人' : ''].filter(Boolean).join('、');
+const CHIBI_NEG = 'chibi inset, multiple views, realistic proportions';
+
 function buildChatPrompt(scene, picks, { nsfw = hasNsfwRating(scene) } = {}) {
     const d = getData();
     const artist = d.active ? M.ticketString(d, d.active) : '';
     const chars = picks.map(p => p.char);
     const base = M.mergeTags(artist, /\b(?:\d+(?:boys?|girls?|others?)|no humans)\b/i.test(scene) ? '' : countTags(chars), scene, d.options.chatPositive || '');
-    const chatNeg = [d.active ? M.ticketNeg(d, d.active) : '', d.options.chatNegative || ''].filter(Boolean).join(', ');
+    const frame = d.options.frameKeep ? '' : frameOf([d.active ? M.ticketString(d, d.active) : '', scene, d.options.chatPositive].filter(Boolean).join(', '));
+    const fixedTags = (c, o) => frameTrim(fixedTagsAll(c, o), frame).text;
+    const chatNeg = [d.active ? M.ticketNeg(d, d.active) : '', d.options.chatNegative || '', frame && frame.chibi ? CHIBI_NEG : ''].filter(Boolean).join(', ');
     if (d.options.chatNoSplit || !canSplit() || picks.length === 0) {
         const flat = M.mergeTags(base, ...picks.map(p => [fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')));
         const { positive, negative } = E.composeStudio({ pos: flat, neg: [chatNeg, ...picks.flatMap(p => [p.char.negative, p.uc])].filter(Boolean).join(', ') });
@@ -5853,29 +5953,34 @@ function deleteOutfit(ownerKey, id) {
 
 /** 生图页选的入画角色 → 提示词。cast：[{ key, pos: 'L'|'C'|'R', outfit?: 衣服 id，'' = 不穿固定衣服 }] */
 const CAST_X = { L: 0.3, C: 0.5, R: 0.7 };
-function studioCastPick(e, nsfw = false) {
+function studioCastPick(e, nsfw = false, frame = '') {
     const ch = getChar(e.key);
     if (!ch) return null;
     const out = e.outfit === '' ? null : (ch.outfits.find(o => o.id === e.outfit) || currentOutfit(ch));
-    const look = [lookTags(ch), nsfw ? tagText(ch.nsfwBody) : ''].filter(Boolean).join(', ');
-    const act = String(e.act || '').trim(), fit = tagText(out?.tags);
+    let look = [lookTags(ch), nsfw ? tagText(ch.nsfwBody) : ''].filter(Boolean).join(', ');
+    const lk = frameTrim(look, frame), ft = frameTrim(tagText(out?.tags), frame);
+    look = lk.text;
+    const act = String(e.act || '').trim(), fit = ft.text, dropped = [...lk.dropped, ...ft.dropped];
     // 分角色时：外貌 → 这个人的动作 → 衣服，动作别被一长串衣服挤到最后
-    return { char: ch, pos: CAST_X[e.pos] ? e.pos : 'C', look, act, fit, tags: [look, act, fit].filter(Boolean).join(', '), x: CAST_X[e.pos] ?? 0.5 };
+    return { char: ch, dropped, pos: CAST_X[e.pos] ? e.pos : 'C', look, act, fit, tags: [look, act, fit].filter(Boolean).join(', '), x: CAST_X[e.pos] ?? 0.5 };
 }
 function studioCastPrompt({ pos = '', neg = '', scene = '' }, cast) {
     const nsfw = hasNsfwRating([pos, scene].filter(Boolean).join(', '));
-    const picks = (cast || []).map(e => studioCastPick(e, nsfw)).filter(Boolean);
+    const frame = getData().options?.frameKeep ? '' : frameOf([pos, scene].filter(Boolean).join(', '));
+    const picks = (cast || []).map(e => studioCastPick(e, nsfw, frame)).filter(Boolean);
     if (!picks.length) return { ...E.composeStudio({ pos, neg, scene }), chars: [], picks };
+    const framing = { frame, name: frameName(frame), dropped: [...new Set(picks.flatMap(p => p.dropped || []))] };
+    if (frame && frame.chibi) neg = [neg, CHIBI_NEG].filter(Boolean).join(', ');
     const chars = picks.map(p => p.char);
     const hasCount = /\b(?:\d+(?:boys?|girls?|others?)|no humans)\b/i.test(pos);
     const negAll = [neg, ...chars.map(c => c.negative)].filter(Boolean).join(', ');
     if (picks.length === 1 || !canSplit({ chat: false })) {
         const lead = picks.length === 1 ? 'solo' : (hasCount ? '' : countTags(chars));
         // 固定提示词（动作、镜头）放在外貌后面、衣服前面：NovelAI 越靠前越听话，原来排在一长串衣服后面容易被忽略
-        return { ...E.composeStudio({ pos: M.mergeTags(pos, lead, ...picks.map(p => [p.look, p.act].filter(Boolean).join(', ')), scene, ...picks.map(p => p.fit)), neg: negAll, scene: '' }), chars: [], picks };
+        return { framing, ...E.composeStudio({ pos: M.mergeTags(pos, lead, ...picks.map(p => [p.look, p.act].filter(Boolean).join(', ')), scene, ...picks.map(p => p.fit)), neg: negAll, scene: '' }), chars: [], picks };
     }
     const r = E.composeStudio({ pos: M.mergeTags(hasCount ? '' : countTags(chars), pos), neg, scene });
-    return { ...r, chars: picks.map(p => ({ prompt: soloize(p.tags), uc: p.char.negative || '', center: { x: p.x, y: 0.5 } })), picks };
+    return { framing, ...r, chars: picks.map(p => ({ prompt: soloize(p.tags), uc: p.char.negative || '', center: { x: p.x, y: 0.5 } })), picks };
 }
 /** 入画角色绑的长相参考组 */
 function studioCastRefs(picks) {
@@ -5883,7 +5988,7 @@ function studioCastRefs(picks) {
     return [...new Set((picks || []).map(p => p.char.charRef).filter(id => id && d.charRefGroups?.[id]))];
 }
 
-return { studioCastPrompt, lookTags, wardrobeGroups, outfitHolders, takeOffOutfit, deleteOutfitGroup, studioCastRefs, namesOf, castIn, markerPrompt, avatarUrl, stCards, stPersonas, currentPersonaKey, getChar, saveChar, descOf, descOfFull, sideKicks, addSideKick, deleteChar, chatId, currentCast, removeFromCast, setCastOn, tagText, currentOutfit, fixedTags, canSplit, buildChatPrompt, previewCast, generateForMessage, insertImage, parsePairs, freeChars, saveCharacterPost, outfitFromPost, characterPayload, importZhihuijiCharacters, copyLook, wardrobe, findOutfit, giveOutfit, deleteOutfit };
+return { studioCastPrompt, frameOf, frameTrim, CHIBI_NEG, lookTags, wardrobeGroups, outfitHolders, takeOffOutfit, deleteOutfitGroup, studioCastRefs, namesOf, castIn, markerPrompt, avatarUrl, stCards, stPersonas, currentPersonaKey, getChar, saveChar, descOf, descOfFull, sideKicks, addSideKick, deleteChar, chatId, currentCast, removeFromCast, setCastOn, tagText, currentOutfit, fixedTags, canSplit, buildChatPrompt, previewCast, generateForMessage, insertImage, parsePairs, freeChars, saveCharacterPost, outfitFromPost, characterPayload, importZhihuijiCharacters, copyLook, wardrobe, findOutfit, giveOutfit, deleteOutfit };
 })();
 
 // ───── ui.js ─────
@@ -6960,7 +7065,8 @@ function previewHtml(s) {
     const c = cast.length ? C.studioCastPrompt(studioParts(), cast) : E.composeStudio(studioParts(), s);
     const charLines = (c.chars || []).map((x, i) => `<br><b>角色${i + 1}（${CAST_POS[c.picks[i].pos]}）</b>：${esc(x.prompt)}`).join('');
     const wait = ui.studio.sceneOn !== false && String(ui.studio.scene || '').trim() && !sceneReady();
-    return { pos: esc(c.positive) + charLines + (wait ? '<br><i class="pc-dim">＋ 固定提示词（有中文，生成时先转成标签，放在质量词前面）</i>' : ''), neg: esc(c.negative), aqt: c.aqt, ucp: c.ucp };
+    const fr = c.framing?.dropped?.length ? `<br><i class="pc-dim">${esc(c.framing.name)}，角色里这些词没发：${esc(c.framing.dropped.join(', '))}</i>` : '';
+    return { pos: esc(c.positive) + charLines + fr + (wait ? '<br><i class="pc-dim">＋ 固定提示词（有中文，生成时先转成标签，放在质量词前面）</i>' : ''), neg: esc(c.negative), aqt: c.aqt, ucp: c.ucp };
 }
 
 function ucpOptions(s) {
@@ -9377,6 +9483,7 @@ function viewLobby(d) {
     <div class="pc-sort"><button class="${lb.sort === 'new' ? 'on' : ''}" data-act="lobbysort" data-sort="new">最新</button><button class="${lb.sort === 'hot' ? 'on' : ''}" data-act="lobbysort" data-sort="hot">最多人保存</button><button data-act="lobbyrefresh">刷新</button></div>
     ${lb.error ? `<div class="pc-card pc-pad pc-mt">连不上共享服务器：${esc(lb.error)}</div>` : ''}
     ${lb.loading && !lb.items.length ? '<div class="pc-tip pc-mt">加载中…</div>' : ''}
+    <style>.pc-lobby-card,.pc-lobbygrid>.pc-ticket{content-visibility:auto;contain-intrinsic-size:auto 320px}.pc-lobby-img img:not([src]),.pc-ticket-img img:not([src]){visibility:hidden}.pc-thumb-in{animation:pcThumbIn .25s ease}@keyframes pcThumbIn{from{opacity:0}to{opacity:1}}</style>
     ${view === 'grid' ? `<style>.pc-lobbygrid.thumb-full{display:block;columns:2;column-gap:12px}.pc-lobbygrid.thumb-full>.pc-ticket{display:inline-block;width:100%;margin:0 0 16px;break-inside:avoid;vertical-align:top}.pc-lobbygrid.thumb-full .pc-ticket-img{height:auto!important;-webkit-mask-image:none;mask-image:none}.pc-lobbygrid.thumb-full .pc-ticket-img img{height:auto;object-fit:contain;display:block}</style><div class="pc-grid2 pc-lobbygrid pc-mt-s ${d.options.lobbyThumb === 'crop' ? '' : 'thumb-full'}">${items.map(p => lobbyGridCard(p)).join('')}</div>` : `<div class="pc-list pc-mt">${items.map(p => lobbyCard(p)).join('')}</div>`}
     ${!lb.loading && !items.length ? '<div class="pc-empty pc-mt"><b>这里还没有东西</b><span>点右上角「＋ 上传」，填写画师串和署名就能发布。</span></div>' : ''}
     ${lb.items.length < lb.total ? '<button class="pc-btn pc-mt wide" data-act="lobbymore">加载更多</button>' : ''}
@@ -9390,7 +9497,7 @@ function lobbyGridCard(p) {
     const img = p.images[lobbyImgIdx(p)];
     const banned = p.content?.artistString && M.bannedIn(getData(), p.content.artistString).length;
     return `<article class="pc-ticket ${p.copied ? 'saved' : ''} ${banned ? 'banned' : ''}" data-act="lobbyopen" data-id="${p.id}" data-lp="lpost">${banned ? '<span class="pc-banbadge">含黑名单画师</span>' : ''}
-      <div class="pc-ticket-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}" ${p.images.length > 1 && !lobbySpoiled(p) ? `data-act="lobbyimgnext" data-id="${p.id}"` : ''} style="position:relative">${img ? `<img src="${esc(L.lobbyImgUrl(img.url))}" loading="lazy" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}${p.images.length > 1 ? `<em class="pc-imgno">${lobbyImgIdx(p) + 1}/${p.images.length}</em>` : ''}</div>
+      <div class="pc-ticket-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}" ${p.images.length > 1 && !lobbySpoiled(p) ? `data-act="lobbyimgnext" data-id="${p.id}"` : ''} style="position:relative">${img ? `<img ${L.lobbyThumbAttr(img.url)} decoding="async" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}${p.images.length > 1 ? `<em class="pc-imgno">${lobbyImgIdx(p) + 1}/${p.images.length}</em>` : ''}</div>
       <span class="pc-kind">${KIND_NAME[p.kind] || p.kind}</span>
       <button class="pc-use ${p.copied ? 'on dark' : ''}" data-act="lobbycopy" data-id="${p.id}" aria-label="保存">${p.copied ? SYM.check : SYM.down}</button>
       <div class="pc-ticket-text"><b>${esc(p.name)}</b><div class="pc-row-between pc-meta"><span>${esc(p.nickname)}</span><span>♡ ${p.likes} · ${p.copies} 存</span></div></div>
@@ -9545,7 +9652,7 @@ function toggleBlockTag(tag) {
 function lobbyCard(p) {
     const img = p.images[lobbyImgIdx(p)];
     return `<article class="pc-lobby-card" data-lp="lpost" data-id="${p.id}">
-      <div class="pc-lobby-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}" ${img && !lobbySpoiled(p) ? (p.images.length > 1 ? `data-act="lobbyimgnext" data-id="${p.id}"` : `data-act="viewimg" data-src="${esc(L.lobbyImgUrl(img.url))}"`) : ''}>${img ? `<img src="${esc(L.lobbyImgUrl(img.url))}" loading="lazy" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}${p.images.length > 1 ? `<em>${lobbyImgIdx(p) + 1}/${p.images.length}</em>` : ''}</div>
+      <div class="pc-lobby-img ${lobbySpoiled(p) ? 'pc-spoiler' : ''}" ${img && !lobbySpoiled(p) ? (p.images.length > 1 ? `data-act="lobbyimgnext" data-id="${p.id}"` : `data-act="viewimg" data-src="${esc(L.lobbyImgUrl(img.url))}"`) : ''}>${img ? `<img ${L.lobbyThumbAttr(img.url)} decoding="async" alt="">` : '<span>无图</span>'}${lobbySpoiled(p) ? `<button class="pc-spoil-btn" data-act="lobbyreveal" data-id="${p.id}">剧透 · 点一下看</button>` : ''}${p.images.length > 1 ? `<em>${lobbyImgIdx(p) + 1}/${p.images.length}</em>` : ''}</div>
       <div class="pc-lobby-text">
         <div class="pc-row-between"><span class="pc-label">${esc(p.nickname)} · ${KIND_NAME[p.kind] || p.kind}</span>
           ${p.mine ? `<button class="pc-icon-btn small" data-act="lobbydel" data-id="${p.id}" aria-label="删除我分享的">×</button>` : `<button class="pc-icon-btn small" data-act="lobbyreport" data-id="${p.id}" aria-label="举报">${ICON.flag}</button>`}</div>
@@ -9704,6 +9811,7 @@ function viewSettings(d) {
       <label class="pc-field"><span>开始标记（前缀）</span><input data-optstr="imageStartTag" value="${esc(marker.start)}" placeholder="image###"></label>
       <label class="pc-field"><span>结束标记</span><input data-optstr="imageEndTag" value="${esc(marker.end)}" placeholder="###"></label>
       <div class="pc-hint">逐图调用角色：在图片提示词内写 $名字-sfw-upperbody$，也支持智绘姬 JSON 角色标记。只补这张图指定角色的外貌和参考图；纯英文标签照常使用。使用外部生图预设时，请在该预设中加入逐图角色标记规则。<br>已内置「智库 · 生图标记不发送」正则：过滤发送给聊天模型的生图标记，不影响生图读取。修改标记时自动同步。</div>
+      ${sw('frameKeep', '画头像、QQ人也发全部角色词', '默认关：正面、固定提示词或聊天画面里写了 portrait、upper body、cowboy shot 这类镜头词时，角色页存的身材、腿脚、下半身衣服这些拍不到的词不发；写了 chibi（QQ人）时，尖脸、身材、身高这些跟大头小身子打架的词也不发，负面自动加上 chibi inset（旁边冒小人）。打开就全部照发。')}
       ${sw('chatNoSplit', '聊天插图不分人物', '打开：几个人的描写都合并进正面（和生图页一样），画师串和质量词作用到所有内容，画风更稳；代价是人物特征可能串（比如发色互换）。关闭：用 NovelAI 4.5 的分人物提示词，人物更不容易混，但画风可能变弱。')}
       <label class="pc-field"><span>聊天生图额外正面词 · 每张都加在场景后面</span><textarea class="pc-textarea small mono" data-optstr="chatPositive" placeholder="比如 masterpiece, best quality, ultra-detailed, illustration, detailed background, cinematic lighting">${esc(d.options.chatPositive || '')}</textarea></label>
       <div class="pc-hint">生图页的「固定提示词」只在生图页用，不会带进聊天。生图页更精致、聊天里出图更糙的话，把固定提示词里的画质、画风、光影词（不要写人物外貌和人数）复制到这里。</div>
@@ -13030,7 +13138,7 @@ return {
 return {
     start: () => __mod_script_entry.start(),
     async stop() {
-        try { await __mod_script_entry.stop(); }
+        try { __mod_lobby.stopThumbs(); await __mod_script_entry.stop(); }
         finally { globalThis.__zhikuInputCleanup?.(); delete globalThis.__zhikuInputCleanup; DOC.getElementById('pc-comfy-css')?.remove(); DOC.getElementById('pc-toasts')?.remove(); for (const id of timers) window.clearTimeout(id); timers.clear(); stopped = true; __mod_translate.stopFetch(); }
     }
 };
