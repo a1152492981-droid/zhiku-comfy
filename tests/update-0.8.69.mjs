@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import vm from 'node:vm';
+const s=fs.readFileSync(new URL('../runtime.js',import.meta.url),'utf8');
+const part=(a,b)=>{const i=s.indexOf(a),j=s.indexOf(b,i);assert(i>=0&&j>i);return s.slice(i,j)};
+const config={novelaimode:'nai-diffusion-5-full',novelai_steps:28,nai3Scale:5};
+const options={comicModel:'v45',comicSteps:12,comicCfg:3,comicRescale:.4};
+const N=vm.runInNewContext(part('const __mod_nai =','const __mod_engine =')+';__mod_nai',{__shim:{extension_settings:{piaoce_nai:config},saveSettingsDebounced(){}},__mod_store:{getData:()=>({options})},setTimeout,clearTimeout,toastr:{info(){}}});
+N.settings();config.novelaimode='nai-diffusion-4-5-full';N.settings();config.novelai_steps=16;config.novelaimode='nai-diffusion-5-full';N.settings();assert.equal(config.novelai_steps,28);config.novelaimode='nai-diffusion-4-5-full';N.settings();assert.equal(config.novelai_steps,16);
+const p=N.buildParameters({positive:'comic',comic:true});assert.equal(p.steps,12);assert.equal(p.scale,3);assert.equal(p.cfg_rescale,.4);assert.equal(config.novelai_steps,16);
+options.comicSteps='';assert.equal(N.buildParameters({positive:'comic',comic:true}).steps,16);
+const apply=vm.runInNewContext(part('function applyShareParams(', 'function openSharedUpload(')+';applyShareParams',{N});
+apply({model:'nai-diffusion-5-full',steps:22,cfg:6});assert.equal(config.novelai_steps,22);config.novelaimode='nai-diffusion-4-5-full';N.settings();assert.equal(config.novelai_steps,16);config.novelaimode='nai-diffusion-5-full';N.settings();assert.equal(config.novelai_steps,22);
+const ui={studio:{sceneTab:'builtin',sceneTags:['QQ人','双人'],sceneMore:true}};
+const scene=vm.runInNewContext(part('const BUILTIN_SCENES =','function sceneRow(')+';({list:BUILTIN_SCENES,render:sceneBrowser})',{ui,esc:String,ICON:{search:''},sceneSig:p=>p.scene,sceneSnapshot:()=>({scene:''})});
+assert.equal(scene.list.length,118);const expected=scene.list.map((p,i)=>({p,i})).filter(({p})=>['QQ人','双人'].every(t=>p.tags.includes(t)));const html=scene.render();assert(expected.length>0);assert.equal((html.match(/data-act="sceneuse"/g)||[]).length,expected.length);for(const {i} of expected)assert(html.includes('data-i="'+i+'"'));
+console.log('PASS: model memory, share overrides, comic request parameters, 118 builtins and multi-tag filtering');
