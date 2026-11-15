@@ -1,6 +1,6 @@
 # 智库 · SillyTavern 扩展
 
-作者 **if love** · 版本 **0.8.61**。NovelAI 生图、画师库、例图、角色、衣柜、标记生图与共享上传。
+作者 **if love** · 版本 **0.8.62**。NovelAI 生图、画师库、例图、角色、衣柜、标记生图与共享上传。
 
 ## 安装与更新
 
@@ -36,6 +36,13 @@ image###1boy, solo, sunset, cinematic lighting###
 ## 兼容脚本文件
 
 `zhiku.script.json` 和 `zhiku.js` 保留为此前的酒馆助手脚本交付文件。扩展安装使用仓库地址，不使用这两个文件的 Raw 地址。
+
+## 0.8.62 改动
+
+- 读取角色设定前可勾选世界书条目，支持搜索、全选、恢复默认和取消读取。
+- 漫画可选择 ComfyUI 通道，尺寸可跟随生图设置；ComfyUI 下原先选择的画内对白改用插件叠字。
+
+- 修：`year_2025`、`artist_collaboration`、`detailed eyes`、`detailed hair` 这类词会被当成画师，加上 `artist:` 后变成 `artist:year_2025`、`-2::artist:artist_collaboration::` 发出去，等于没写。现在粘贴画师名、补 artist:、批量导入都不会再给它们加；画师库里已经存成画师的，打开时会自动去掉 artist:，变回普通词。
 
 ## 0.8.61 改动
 
