@@ -35,3 +35,9 @@ data=M.normalizeData(JSON.parse(JSON.stringify(data)));assert.equal(data.artists
 assert.equal(data.artists[kept.id],undefined);assert.equal(data.groups['g_'+kept.id].images[0].path,'old.png');assert.equal(data.groups[groupId].images[0].path,'keep.png');
 console.log('PASS: tagged/mixed artist strings, weights, style preservation, plain-name splitting, deduplication, real batch queue, saved-library reload, skip-existing and legacy cleanup.');
 {const d=M.emptyData();const r=M.createFromString(d,{text:'artist:4k, artist:8k, artist:wlop'});assert.equal(Object.keys(d.artists).length,1);assert.match(M.ticketString(d,r),/\b4k\b/);assert.doesNotMatch(M.ticketString(d,r),/artist:4k/);}
+const refillData=M.emptyData();const rr=M.createFromString(refillData,{text:'1.3::artist:alpha::, artist:beta, chibi',forceGroup:true});const bui={batch:{text:''}};
+const refill=vm.runInNewContext('(function(v){const el={dataset:{v}};switch("batchfill"){'+between("            case 'batchfill': {","            case 'batchpause':")+'}})',{M,d:refillData,ui:bui,toastr:{info(){}},render(){}});
+refill('groups');assert.equal(bui.batch.text,M.ticketString(refillData,rr));assert.equal(M.parseBatchLines(bui.batch.text).length,1);
+refill('every');assert.equal(M.parseBatchLines(bui.batch.text).length,3);
+assert(!M.parseArtistList('chibi, clean_rendering, artist:alpha::').some(x=>/chibi|rendering/.test(x.tag)));
+console.log('PASS: batch refill groups/all and style-tag preservation');
