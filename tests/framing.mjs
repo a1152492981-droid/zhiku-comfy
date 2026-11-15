@@ -32,7 +32,8 @@ const both=F.frameTrim(look,F.frameOf('5::chibi::, portrait'));
 assert(!both.text.includes('large breasts')&&!both.text.includes('mature female')&&both.text.includes('black hair'),both.text);
 console.log('PASS: chibi drops face shape / body build');
 
-assert.equal(F.frameOf('artist:chibi, artist:portrait'),'');
+assert.equal(F.frameOf('artist:portrait'),'');
+assert.equal(F.frameOf('artist:chibi').chibi,true);
 const data=M.emptyData();data.characters.test={key:'test',name:'A',kind:'free',appearance:[{en:'1girl'},{en:'black hair'},{en:'tall female'},{en:'sharp jawline'}],nsfwBody:[],outfits:[{id:'o',tags:[{en:'boots'},{en:'shirt'}]}],outfitId:'o',outfitMode:'fixed'};
 const C=vm.runInNewContext(part('const __mod_chars =','// Marker-triggered generation')+'\n__mod_chars',{__mod_model:M,__mod_store:{getData:()=>data,commit(){}},__mod_nai:{settings:()=>({naiMode:'tavern'})},__mod_engine:{composeStudio:({pos,neg,scene})=>({positive:[pos,scene].filter(Boolean).join(', '),negative:neg})},__mod_translate:{},SillyTavern:{getContext:()=>({})},structuredClone,console});
 let built=C.studioCastPrompt({pos:'portrait, chibi',neg:'',scene:''},[{key:'test'}]);assert(!built.positive.includes('boots'));assert(!built.positive.includes('sharp jawline'));assert(built.positive.includes('black hair'));assert(built.negative.includes('chibi inset'));assert(built.framing.dropped.includes('boots'));

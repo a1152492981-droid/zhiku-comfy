@@ -1695,7 +1695,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.65（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.67（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1744,7 +1744,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.65';
+globalThis.__PC_VERSION = '0.8.67';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -1904,6 +1904,8 @@ function normalizeData(raw) {
     // 以前误把 absurdres 之类当成了画师（还加了 artist:）：组里的放回普通词；单独的没例图就删，有例图的留着让人自己删
     const fake = a => a && fakeArtistName(a.tag);
     migrateNonArtists(d, fake);
+    mergeDupArtists(d);
+    for (const g of Object.values(d.groups)) if (g.migratedArtistId && !(g.members || []).length && !(g.images || []).length) { deleteGroup(d, g.id); if (d.beforeBinding?.type === 'group' && d.beforeBinding.id === g.id) d.beforeBinding = null; }
     d.recent = Array.isArray(d.recent) ? d.recent : [];
     d.history = Array.isArray(d.history) ? d.history : [];
     if (!d.aiPresets || typeof d.aiPresets !== 'object') d.aiPresets = { active: 'tavern:', list: {}, fn: {}, markOn: {} };
@@ -1912,6 +1914,44 @@ function normalizeData(raw) {
     // 打开时不自动删任何画师串：存了就留着，没用的让人自己删
     d.recent = d.recent.filter(r => r.type !== 'group' || d.groups[r.id]);
     return d;
+}
+
+/** 同一位画师的几种写法合成一位：留带空格或下划线的写法（danbooru 的写法），一样的话留例图多的 */
+function mergeDupArtists(d) {
+    for (const a of Object.values(d.artists)) {
+        const t = String(a.tag || '').replace(/^artist\s*:\s*artist[ _](?!collaboration)/i, 'artist:');
+        if (t !== a.tag && t.replace(/^artist:/, '').trim()) a.tag = t;
+    }
+    const loose = a => artistKey(a.tag).replace(/[\s_]+/g, '');
+    const score = a => (/[ _]/.test(a.tag.replace(/^artist:/i, '').trim()) ? 1000 : 0) + (a.images?.length || 0) * 10 + (/[A-Z]/.test(a.tag) ? 0 : 1);
+    const byKey = new Map();
+    for (const a of Object.values(d.artists)) { const k = loose(a); if (!k) continue; (byKey.get(k) || byKey.set(k, []).get(k)).push(a); }
+    const moved = new Map();
+    for (const list of byKey.values()) {
+        if (list.length < 2) continue;
+        list.sort((x, y) => score(y) - score(x) || (x.createdAt || 0) - (y.createdAt || 0));
+        const keep = list[0];
+        keep.images ||= [];
+        for (const a of list.slice(1)) {
+            const imageKey = x => x.id || x.path || x.url || JSON.stringify(x);
+            const seen = new Set(keep.images.map(imageKey));
+            for (const im of a.images || []) { const key = imageKey(im); if (!seen.has(key)) { seen.add(key); keep.images.push(im); } }
+            if (a.note && !String(keep.note || '').includes(a.note)) keep.note = [keep.note, a.note].filter(Boolean).join('；');
+            keep.collections = [...new Set([...(keep.collections || []), ...(a.collections || [])])];
+            if (a.fav) keep.fav = true;
+            moved.set(a.id, keep.id);
+            delete d.artists[a.id];
+        }
+    }
+    if (!moved.size) return;
+    for (const g of Object.values(d.groups)) {
+        const seen = new Set();
+        g.members = (g.members || []).map(m => moved.has(m.artistId) ? { ...m, artistId: moved.get(m.artistId) } : m).filter(m => !seen.has(m.artistId) && seen.add(m.artistId));
+    }
+    const remap = ref => ref?.type === 'artist' && moved.has(ref.id) ? { type: 'artist', id: moved.get(ref.id) } : ref;
+    for (const key of ['active', 'previousActive', 'beforeBinding']) if (d[key]) d[key] = remap(d[key]);
+    d.recent = (Array.isArray(d.recent) ? d.recent : []).map(remap).filter(Boolean);
+    for (const [key, ref] of Object.entries(d.bindings || {})) d.bindings[key] = remap(ref);
 }
 
 // Move misclassified quality tags back into prompt text without losing example images.
@@ -1960,7 +2000,7 @@ function artistKey(tag) {
 
 /** 把裸画师名补成 artist:xxx */
 function normalizeArtistTag(text) {
-    let t = String(text || '').trim().replace(/^(artist\s*:\s*)+/i, 'artist:');
+    let t = String(text || '').trim().replace(/^(artist\s*:\s*)+/i, 'artist:').replace(/\s*:+\s*$/, '');
     if (!t) return '';
     if (!/^artist\s*:/i.test(t)) t = 'artist:' + t;
     return t.replace(/^artist\s*:\s*/i, 'artist:');
@@ -2042,7 +2082,7 @@ function stripArtists(text) {
 }
 
 /** 粘贴画师名时顺手带进来的质量词、年份等，不当成画师 */
-const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year[ _]\d{4}|\d{4}|no[ _]text|artist[ _]collaboration|(?:finely[ _])?detailed[ _](?:eyes|hair|face|skin|features|irises|clothes)|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+)$/i;
+const NOT_ARTIST = /^(masterpiece|best[ _]quality|amazing[ _]quality|great[ _]quality|good[ _]quality|normal[ _]quality|bad[ _]quality|worst[ _]quality|high[ _]quality|low[ _]quality|ultra[ -_]?detailed|highres|absurdres|very[ _]aesthetic|aesthetic|year[ _]\d{4}|\d{4}|no[ _]text|artist[ _]collaboration|chibi|chibi[ _]inset|chibi[ _]only|super[ _]deformed|deformed|oversized[ _]head|small[ _]body|big[ _]head|[23]-head-tall|multiple[ _]views|incredibly[ _]absurdres|clean[ _]rendering|[\w -]+[ _]emphasis|[\w -]+[ _]rendering|semi-realistic[ _]skin|full[ _]color|anime[ _]coloring|flat[ _]color|stunning[ _]quality|high[ _]resolution|(?:finely[ _])?detailed[ _](?:eyes|hair|face|skin|features|irises|clothes)|rating:.*|1boy|1girl|solo|nsfw|sfw|\d{1,2}k|\d{1,2}k[ _]wallpaper|\d{3,4}p|uhd|fhd|hd|hdr|ultra[ _]hd|high[ _]res(?:olution)?|hi[ _-]?res|lowres|low[ _]res(?:olution)?|newest|latest|oldest|recent|early|mid|old|official[ _]art|wallpaper|best|top[ _]quality|(?:extremely|highly|very|ultra|hyper)[ _-]?detailed|intricate[ _]details?|sharp[ _]focus|depth[ _]of[ _]field|cinematic[ _]lighting|perfect[ _]anatomy|detailed[ _]background|score_\d+(?:_up)?|source_\w+)$/i;
 /** artist:4k、artist:masterpiece 这类：带了 artist: 但明显不是画师 */
 const fakeArtistName = text => {
     const tag = String(text || '').replace(/^artist\s*:\s*/i, '').trim();
@@ -2125,8 +2165,8 @@ function parseBatchLines(text) {
             continue;
         }
         const bare = t => t.replace(/^\s*-?\d+(?:\.\d+)?::/, '').replace(/::\s*$/, '').replace(/[{}\[\]]/g, '').trim();
-        if (label) push(batchUnit(toks.map(t => batchNameLike(bare(t)) ? batchWithArtist(t) : t)));
-        else if (tokenize(line).some(t => t.isArtist)) push(batchUnit([line]));
+        if (tokenize(line).some(t => t.isArtist)) push(batchUnit([line]));
+        else if (label) push(batchUnit(toks.map(t => batchNameLike(bare(t)) ? batchWithArtist(t) : t)));
         else if (!toks.every(t => batchNameLike(bare(t)))) {
             push(batchUnit(toks.map(t => batchNameLike(bare(t)) ? batchWithArtist(t) : t)));
         } else {
@@ -5031,6 +5071,33 @@ async function readChat(r) {
 
 const normPairs = arr => (Array.isArray(arr) ? arr : []).map(x => typeof x === 'string' ? { en: x, zh: '' } : { en: String(x.en || '').trim(), zh: String(x.zh || '').trim() }).filter(x => x.en && !hasChinese(x.en));
 
+/**
+ * 第二遍只看手。一次看整张图时，模型（尤其小模型）常把手势读成「手在脸边」，也分不清是不是画面外别人的手。
+ * 单独问一遍手，返回 [{en, zh}]；读不出来返回 []
+ */
+const GESTURE_RE = /\b(finger heart|heart hands|v sign|double v|v over eye|ok sign|thumbs up|pointing|index finger raised|finger to (own |another's )?mouth|shushing|finger gun|claw pose|paw pose|fox shadow puppet|\\m\/|waving|salute|peace sign)\b/i;
+const OTHER_HAND_RE = /another's|\bpov hands?\b|disembodied/i;
+async function readHands(imageDataUrl) {
+    const sys = `你只看图里的手，别的都不管。一只一只看清楚：
+1. 这只手是谁的：画里的人自己的（own），还是从画面边上伸进来的别人的手（another，常见是镜头前的人，也就是 POV）。看手臂从哪里连过来，接不到画里人的肩膀就是别人的手。
+2. 手指怎么摆：哪根伸直、哪根弯，拇指和食指有没有交叉，两只手是不是合在一起。
+3. 手势是什么，从这些里挑最准的：finger heart（拇指和食指交叉的单手比心，常放在脸边）、heart hands（双手合成心形）、v sign、double v、v over eye、ok sign、thumbs up、pointing、pointing at viewer、index finger raised、finger to mouth、shushing、finger gun、claw pose、paw pose、fox shadow puppet、\\m/、waving、salute、fist、open hand。没有特别的手势就不写手势。
+4. 手在碰什么：hand on own cheek / chin / chest、hand in own hair、holding xx。
+5. 别人的手要写互动：pov hands，再写 holding another's wrist、holding another's hand、another's hand on face、hand on another's face、hand on another's head、kissing another's fingers、finger to another's mouth、licking another's fingers、pulling another's tie、grabbing another's collar 等，分清谁抓着谁。
+只输出 JSON：{"hands":[{"whose":"own 或 another","zh":"中文一句话说这只手"}],"tags":[{"en":"标签","zh":"中文"}]}`;
+    const j = pickJson(await askVision(sys, '只看手：每只手是谁的、手指怎么摆、是什么手势、在碰什么。', imageDataUrl, { maxTokens: 800, fn: 'pose' }));
+    return normPairs(j.tags);
+}
+/** 把读手的结果并进姿势：具体手势顶掉「手在脸边」，别人的手顶掉「自己托腮」 */
+function mergeHands(pose, hands) {
+    if (!hands.length) return pose;
+    const other = hands.some(h => OTHER_HAND_RE.test(h.en)), gesture = hands.some(h => GESTURE_RE.test(h.en));
+    let out = pose.filter(p => !(gesture || other) || !/^hands? (near|by|close to) (own )?face$/i.test(p.en));
+    if (other) out = out.filter(p => !/^(hand on own (face|cheek|chin)|chin rest|head on hand|hand to own mouth)$/i.test(p.en) || hands.some(h => h.en.toLowerCase() === p.en.toLowerCase()));
+    const have = new Set(out.map(p => p.en.toLowerCase()));
+    return [...hands.filter(h => !have.has(h.en.toLowerCase())), ...out];
+}
+
 /** 看图提取衣服 */
 async function outfitFromImage(imageDataUrl) {
     const sys = `你看图，把画面里主要人物穿的衣服写成 NovelAI 标签。只写衣服、鞋、配饰、发饰，不写长相、动作、背景、画风。从上到下写全，颜色、材质、款式写清楚。
@@ -5110,6 +5177,15 @@ async function imageToPrompt(imageDataUrl) {
     const order = ['people', 'camera', 'action', 'nsfw', 'expression', 'outfit', 'background', 'lighting'];
     let list = order.flatMap(k => arr(j[k]));
     if (!list.length && j.tags) list = arr(j.tags);
+    // 第二遍只看手，手部标签插在人数后面
+    try {
+        const hands = await readHands(imageDataUrl);
+        if (hands.length) {
+            const np = arr(j.people).length;
+            const merged = mergeHands(list.slice(np).map(en => ({ en, zh: '' })), hands).map(x => x.en);
+            list = [...list.slice(0, np), ...(hands.some(h => OTHER_HAND_RE.test(h.en)) && !list.some(t => /\bpov\b/i.test(t)) ? ['pov'] : []), ...merged];
+        }
+    } catch (e) { if (e?.name === 'AbortError') throw e; console.warn('[智库] 读手没成功', e); }
     const seen = new Set();
     const tags = list.filter(t => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).join(', ');
     if (!tags) throw new Error('AI 没写出标签，换个能识图的模型试试');
@@ -9108,7 +9184,8 @@ function viewBatch(d) {
       <label class="pc-label" for="pc-batch" style="margin-top:0">画师名（一行一个，或用逗号隔开）</label>
       <textarea id="pc-batch" class="pc-textarea mono" style="min-height:150px" data-bind="batch.text" placeholder="一行一个：画师名，或整串（artist:xxx, artist:yyy, 别的词…）">${esc(b.text)}</textarea>
       <div id="pc-batch-ban">${batchBanWarn(d, b.text)}</div>
-      <div class="pc-chips wrap"><button class="pc-pill dashed tiny" data-act="batchfill" data-v="all">放进画师库里全部单个画师</button><button class="pc-pill dashed tiny" data-act="batchfill" data-v="empty">只放还没有例图的</button></div>
+      <div class="pc-chips wrap"><button class="pc-pill dashed tiny" data-act="batchfill" data-v="all">放进画师库里全部单个画师</button><button class="pc-pill dashed tiny" data-act="batchfill" data-v="empty">只放还没有例图的</button><button class="pc-pill dashed tiny" data-act="batchfill" data-v="groups">放进全部画师串</button><button class="pc-pill dashed tiny" data-act="batchfill" data-v="every">画师串和单个画师全部</button></div>
+      <div class="pc-hint">画师库里已有的串和画师，生成的例图会直接存回原来那一串 / 那位画师。想全部换成同一个模板对比，就选好下面的提示词，关掉「已经有这种例图的跳过」。</div>
       ${label('用哪种提示词')}
       ${sampleChooser('batch')}
       ${b.who === 'chars' ? '' : `<label class="pc-switch"><input type="checkbox" data-bind-check="batch.skipExisting" ${b.skipExisting ? 'checked' : ''}><span></span>已经有这种例图的画师跳过</label>`}
@@ -10620,8 +10697,11 @@ async function onClick(ev, outside = false) {
             case 'batchtochar': try { await batchToChar(d); } catch (e) { toastr.error(e.message, '存进角色相册'); } render(); break;
             case 'batchexport': try { await batchExport(d); } catch (e) { toastr.error(e.message, '导出'); } break;
             case 'batchfill': {
-                const arts = Object.values(d.artists).filter(a => (el.dataset.v === 'all' || !a.images.length) && !M.banInfo(d, a.tag));
-                ui.batch.text = arts.map(a => a.tag.replace(/^artist:/, '')).join('\n');
+                const v = el.dataset.v;
+                const arts = v === 'groups' ? [] : Object.values(d.artists).filter(a => (v !== 'empty' || !a.images.length) && !M.banInfo(d, a.tag));
+                const groups = v === 'groups' || v === 'every' ? Object.values(d.groups).filter(g => (g.members || []).length).map(g => M.ticketString(d, { type: 'group', id: g.id })).filter(t => t && !M.bannedIn(d, t).length) : [];
+                ui.batch.text = [...groups, ...arts.map(a => a.tag.replace(/^artist:/, ''))].join('\n');
+                toastr.info(`放进 ${groups.length} 串、${arts.length} 位画师`, '批量生成例图', { timeOut: 2000 });
                 render(); break;
             }
             case 'batchpause': ui.batch.state?.pause(); break;
