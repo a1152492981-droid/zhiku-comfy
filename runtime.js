@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.76（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.77（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.76';
+globalThis.__PC_VERSION = '0.8.77';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -7129,15 +7129,16 @@ async function aiSceneName(p) {
 }
 /** 内置固定提示词：只写人数、动作、互动、构图，不写长相，套谁都行。人数不写，由入画角色自己带（2boys、1girl 1boy 这类） */
 const BUILTIN_SCENES = [
-    {name: "黑白漫画·单格大图",tags: ["单人","黑白","半身"],scene: "monochrome, greyscale, manga, comic, screentone, halftone, ink, lineart, hatching (texture), high contrast, looking at viewer, upper body, white background",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白漫画·四格日常",tags: ["单人","黑白","漫画格","日常"],scene: "monochrome, greyscale, 4koma, comic, manga, multiple views, screentone, surprised, smile, sweatdrop, :o, empty speech bubble, simple background",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白漫画·多格分镜",tags: ["双人","黑白","漫画格"],scene: "monochrome, greyscale, manga, comic, multiple panels, panel layout, close-up, eye focus, looking at another, from side, empty speech bubble, screentone, speed lines",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·速度线冲刺",tags: ["单人","黑白","全身","战斗"],scene: "monochrome, greyscale, manga, speed lines, motion lines, running, dynamic pose, foreshortening, from below, screentone, high contrast, action, emphasis lines",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·对峙特写",tags: ["双人","黑白","特写","对峙"],scene: "monochrome, greyscale, manga, face-to-face, staring, close-up, eye focus, shaded face, serious, dramatic lighting, high contrast, screentone, emphasis lines",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·雨夜回眸",tags: ["单人","黑白","背影","雨天","夜晚"],scene: "monochrome, greyscale, manga, rain, from behind, looking back, wet hair, night, streetlight, screentone, hatching (texture), high contrast, cowboy shot",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·少女漫花背景",tags: ["双人","黑白","半身","约会"],scene: "monochrome, greyscale, shoujo manga, faces close together, looking at another, eye contact, blush, floral background, sparkle, bubble background, screentone, upper body",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·钢笔线稿",tags: ["单人","黑白","立绘","全身"],scene: "monochrome, greyscale, lineart, sketch, ink, traditional media, standing, full body, white background, clean lines",sceneNeg: "colorful, color, watermark, signature"},
-    {name: "黑白·QQ人四格",tags: ["单人","黑白","QQ人","漫画格"],scene: "chibi, super deformed, monochrome, greyscale, 4koma, comic, manga, screentone, multiple views, angry, crying, laughing, sweatdrop, simple background",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·少年漫粗线",tags: ["黑白"],scene: "monochrome, greyscale, manga, comic, bold lineart, thick outlines, high contrast, screentone, speed lines, emphasis lines, dynamic angle",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·少女漫细线",tags: ["黑白"],scene: "monochrome, greyscale, shoujo manga, comic, thin lineart, delicate lines, soft shading, screentone, sparkle, floral background, bubble background",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·剧画写实排线",tags: ["黑白"],scene: "monochrome, greyscale, gekiga, realistic, ink, cross-hatching, hatching (texture), heavy shading, high contrast, detailed",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·重网点",tags: ["黑白"],scene: "monochrome, greyscale, manga, screentone, halftone, dithering, flat shading, clean lineart, high contrast",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·钢笔线稿",tags: ["黑白"],scene: "monochrome, lineart, ink, pen (medium), clean lineart, white background, traditional media",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·铅笔速写",tags: ["黑白"],scene: "monochrome, greyscale, sketch, rough sketch, graphite (medium), traditional media, unfinished, white background",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·水墨笔刷",tags: ["黑白"],scene: "monochrome, greyscale, ink wash painting, brush stroke, ink splatter, traditional media, high contrast, white background",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·复古老漫画",tags: ["黑白"],scene: "monochrome, greyscale, retro artstyle, 1980s (style), manga, comic, screentone, film grain, faded",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·恐怖漫画",tags: ["黑白"],scene: "monochrome, greyscale, horror (theme), manga, cross-hatching, hatching (texture), heavy shadow, dark, eerie, high contrast",sceneNeg: "colorful, color, watermark, signature"},
+    {name: "黑白·QQ人简笔",tags: ["黑白","QQ人"],scene: "chibi, super deformed, monochrome, greyscale, manga, simple lineart, screentone, simple background",sceneNeg: "colorful, color, watermark, signature"},
     { name: "手机挡半脸自拍", tags: ["单人", "半身", "日常"], scene: "solo, selfie, holding phone, phone covering face, hand on own cheek, head tilt, looking at viewer, smile, parted lips, upper body, close-up, stuffed animal in foreground, simple background, white background, depth of field" },
     { name: "借火点烟", tags: ["双人", "特写", "夜晚"], scene: "lighting cigarette, holding lighter, cupping hands, cigarette in mouth, holding cigarette, faces close together, leaning in, eyes closed, half-closed eyes, profile, upper body, close-up, from side, flame, light from below, dramatic lighting, dark" },
     { name: "捏下巴对视", tags: ["双人", "半身", "对峙"], scene: "grabbing another's chin, hand on another's chin, looking at another, eye contact, faces close together, leaning towards each other, kneeling, arm support, from side, cowboy shot, tension, simple background" },
@@ -7262,7 +7263,7 @@ function builtinRow(p, i) {
     const cur = sceneSig(p) === sceneSig(sceneSnapshot());
     return `<div class="pc-promptrow ${cur ? 'cur' : ''}">
       <div class="pc-grow"><b>${esc(p.name)}${cur ? ' <em>在用</em>' : ''}</b><span class="pc-scenetags">${p.tags.map(t => `<i>${esc(t)}</i>`).join('')}</span><small class="mono">${esc(p.scene)}</small>${p.sceneNeg ? `<small class="mono pc-dim">负面：${esc(p.sceneNeg)}</small>` : ''}</div>
-      <div class="pc-promptacts">${cur ? '' : `<button class="pc-pill tiny on" data-act="sceneuse" data-kind="builtin" data-i="${i}">换上</button>`}<button class="pc-pill tiny dashed" data-act="scenecopy" data-i="${i}">存一份改</button></div></div>`;
+      <div class="pc-promptacts">${cur ? '' : `<button class="pc-pill tiny on" data-act="sceneuse" data-kind="builtin" data-i="${i}">换上</button>`}${p.tags.includes('黑白') ? `<button class="pc-pill tiny dashed" data-act="scenestack" data-i="${i}">叠上去</button>` : ''}<button class="pc-pill tiny dashed" data-act="scenecopy" data-i="${i}">存一份改</button></div></div>`;
 }
 /** 固定提示词三页：我存的 / 内置 / 最近用过；标签能多选（同时满足才显示） */
 function sceneBrowser() {
@@ -10693,6 +10694,16 @@ async function onClick(ev, outside = false) {
             }
             case 'scenetab': ui.studio.sceneTab = el.dataset.v; ui.studio.sceneTags = []; ui.studio.sceneMore = false; render(); break;
             case 'scenemore': ui.studio.sceneMore = true; render(); break;
+            case 'scenestack': {
+                const p = BUILTIN_SCENES[Number(el.dataset.i)];
+                if (!p) break;
+                const st = ui.studio;
+                const join = (a, b) => { const seen = new Set(), out = []; for (const x of [...String(a || '').split(','), ...String(b || '').split(',')].map(v => v.trim()).filter(Boolean)) { const k = x.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(x); } } return out.join(', '); };
+                if (!String(st.scene || '').trim()) { applyScene(p); toastr.info(`固定提示词换成了「${p.name}」`, '固定提示词', { timeOut: 1800 }); render(); break; }
+                st.scene = join(st.scene, p.scene); st.sceneNeg = join(st.sceneNeg, p.sceneNeg); st.sceneEn = ''; st.sceneFrom = ''; st.sceneOn = true;
+                saveStudio();
+                toastr.info(`「${p.name}」叠在现在的固定提示词后面了`, '固定提示词', { timeOut: 1800 }); render(); break;
+            }
             case 'scenecopy': {
                 const p = BUILTIN_SCENES[Number(el.dataset.i)];
                 if (!p) break;

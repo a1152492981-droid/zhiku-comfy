@@ -12,5 +12,5 @@ const apply=vm.runInNewContext(part('function applyShareParams(', 'function open
 apply({model:'nai-diffusion-5-full',steps:22,cfg:6});assert.equal(config.novelai_steps,22);config.novelaimode='nai-diffusion-4-5-full';N.settings();assert.equal(config.novelai_steps,16);config.novelaimode='nai-diffusion-5-full';N.settings();assert.equal(config.novelai_steps,22);
 const ui={studio:{sceneTab:'builtin',sceneTags:['QQ人','双人'],sceneMore:true}};
 const scene=vm.runInNewContext(part('const BUILTIN_SCENES =','function sceneRow(')+';({list:BUILTIN_SCENES,render:sceneBrowser})',{ui,esc:String,ICON:{search:''},sceneSig:p=>p.scene,sceneSnapshot:()=>({scene:''})});
-assert.equal(scene.list.length,127);const expected=scene.list.map((p,i)=>({p,i})).filter(({p})=>['QQ人','双人'].every(t=>p.tags.includes(t)));const html=scene.render();assert(expected.length>0);assert.equal((html.match(/data-act="sceneuse"/g)||[]).length,expected.length);for(const {i} of expected)assert(html.includes('data-i="'+i+'"'));
-console.log('PASS: model memory, share overrides, comic request parameters, 127 builtins and multi-tag filtering');
+assert.equal(scene.list.length,128);const expected=scene.list.map((p,i)=>({p,i})).filter(({p})=>['QQ人','双人'].every(t=>p.tags.includes(t)));const html=scene.render();assert(expected.length>0);assert.equal((html.match(/data-act="sceneuse"/g)||[]).length,expected.length);for(const {i} of expected)assert(html.includes('data-i="'+i+'"'));
+console.log('PASS: model memory, share overrides, comic request parameters, 128 builtins and multi-tag filtering');
