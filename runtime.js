@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.72（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.73（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.72';
+globalThis.__PC_VERSION = '0.8.73';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -7885,13 +7885,13 @@ function viewBook(d) {
       ${ui.selecting ? '' : '<button class="pc-pill dashed" data-act="nav" data-view="batch">批量生成例图</button><button class="pc-pill dashed" data-act="randstring">随机画师串</button>'}
     </div>
     ${cols.length && !ui.selecting ? '<div class="pc-tip">长按标签可以改名或删除</div>' : ''}
-    ${ui.selecting ? `<div class="pc-selbar"><span>已选 ${ui.picked.size} 个</span><button class="pc-pill dashed tiny" data-act="selall">全选</button>
+    ${ui.selecting ? `<div class="pc-selbar"><span>已选 ${ui.picked.size} 个</span><button class="pc-pill dashed tiny" data-act="selall">全选</button><button class="pc-pill dashed tiny" data-act="selempty">选没例图的</button>
       <button class="pc-pill dashed tiny" data-act="seltag" ${ui.picked.size ? '' : 'disabled'}>加标签</button>
       ${ui.bookTab === 'artists' ? `<button class="pc-pill dashed tiny" data-act="selstring" ${ui.picked.size ? '' : 'disabled'}>组成画师串</button>` : ''}
       ${ui.bookTab === 'artists' ? `<button class="pc-pill dashed tiny danger" data-act="selban" ${ui.picked.size ? '' : 'disabled'}>拉黑</button>` : ''}
       <button class="pc-pill tiny danger-solid" data-act="seldel" ${ui.picked.size ? '' : 'disabled'}>删除</button></div>` : ''}
-    ${view === 'grid' ? `<div class="pc-grid2 pc-mt-s">${refs.map(r => ticketCard(d, r)).join('') || emptyTxt}</div>`
-        : `<div class="pc-mt-s">${refs.map(r => listCard(d, r)).join('') || emptyTxt}</div>`}
+    ${(() => { const n = Math.max(40, Number(ui.bookShow) || 40), shown = refs.slice(0, n); return (view === 'grid' ? `<div class="pc-grid2 pc-mt-s">${shown.map(r => ticketCard(d, r)).join('') || emptyTxt}</div>`
+        : `<div class="pc-mt-s">${shown.map(r => listCard(d, r)).join('') || emptyTxt}</div>`) + (refs.length > n ? `<div class="pc-center pc-mt-s"><button class="pc-pill dashed" id="pc-bookmore" data-act="bookmore">再显示 ${Math.min(40, refs.length - n)} 个 · 共 ${refs.length} 个</button></div>` : (refs.length > 40 ? `<div class="pc-dim small pc-center pc-mt-s">全部 ${refs.length} 个都在这里了</div>` : '')); })()}
 
     <div style="height:24px"></div>`;
 }
@@ -10253,8 +10253,10 @@ async function onClick(ev, outside = false) {
                 root.querySelector('.pc-body')?.scrollTo(0, 0);
                 break;
             case 'back': ui.view = ui.backTo || 'book'; render(); break;
-            case 'booktab': ui.bookTab = el.dataset.tab; ui.picked.clear(); render(); break;
-            case 'bookfilter': ui.bookFilter = el.dataset.f; render(); break;
+            case 'booktab': ui.bookTab = el.dataset.tab; ui.picked.clear(); ui.bookShow = 40; render(); break;
+            case 'bookfilter': ui.bookFilter = el.dataset.f; ui.bookShow = 40; render(); break;
+            case 'bookmore': ui.bookShow = (Math.max(40, Number(ui.bookShow) || 40)) + 40; render(); break;
+            case 'selempty': { bookList(d).forEach(r => { if (!(itemOf(d, r)?.images || []).length) ui.picked.add(r.id); }); render(); break; }
             case 'open': {
                 ev.stopPropagation();
                 const r = refFrom(el);
@@ -10963,7 +10965,15 @@ async function onClick(ev, outside = false) {
             // 氛围
             // 大堂
             case 'selmode': ui.selecting = !ui.selecting; ui.picked.clear(); render(); break;
-            case 'selpick': { const id = el.dataset.id; if (ui.picked.has(id)) ui.picked.delete(id); else ui.picked.add(id); render(); break; }
+            case 'selpick': {
+                const id = el.dataset.id;
+                if (ui.picked.has(id)) ui.picked.delete(id); else ui.picked.add(id);
+                const on = ui.picked.has(id);
+                root.querySelectorAll('.pc-selbox').forEach(b => { if ((b.dataset.id || b.closest('[data-id]')?.dataset.id) === id) { b.classList.toggle('on', on); b.textContent = on ? '✓' : ''; } });
+                const bar = root.querySelector('.pc-selbar');
+                if (bar) { const t = bar.querySelector('span'); if (t) t.textContent = `已选 ${ui.picked.size} 个`; bar.querySelectorAll('[data-act="seltag"],[data-act="selstring"],[data-act="selban"],[data-act="seldel"]').forEach(x => { x.disabled = !ui.picked.size; }); }
+                break;
+            }
             case 'selall': { const refs = bookList(d); if (ui.picked.size === refs.length) ui.picked.clear(); else refs.forEach(r => ui.picked.add(r.id)); render(); break; }
             case 'selstring': { const tags = [...ui.picked].map(id => d.artists[id]?.tag).filter(Boolean); if (tags.length) openStringMaker({ text: tags.join(', ') }); break; }
             case 'randstring': openStringMaker({ random: true }); break;
@@ -11304,7 +11314,7 @@ function onInput(ev) {
         if (String(el.dataset.bind).startsWith('cfy.')) { clearTimeout(onInput.cf); onInput.cf = setTimeout(saveCfy, 600); }
         if (['studio.pos', 'studio.neg', 'studio.scene', 'studio.sceneEn', 'studio.sceneNeg'].includes(el.dataset.bind)) { updateStudioPreview(); clearTimeout(onInput.ss); onInput.ss = setTimeout(saveStudio, 600); }
         if (el.dataset.bind === 'studio.scene') { const box = root.querySelector('#pc-scene-ai'); if (box) box.hidden = !sceneZh(); const s2 = root.querySelector('#pc-scene-state'); if (s2) s2.textContent = sceneStateText(); }
-        if (el.dataset.bind === 'search') { clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = root.querySelector('[data-bind="search"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
+        if (el.dataset.bind === 'search') { ui.bookShow = 40; clearTimeout(onInput.t); onInput.t = setTimeout(() => { render(); const i = root.querySelector('[data-bind="search"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
         return;
     }
     if (el.dataset.bindArtist) { d.artists[el.dataset.bindArtist].note = el.value; commit({ silent: true }); return; }
