@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.78（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.79（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.78';
+globalThis.__PC_VERSION = '0.8.79';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -2622,6 +2622,7 @@ async function loadData() {
     for (const candidate of found) if (!best || savedAt(candidate[1]) > savedAt(best[1])) best = candidate;
     data = normalizeData(best ? structuredClone(best[1]) : null);
     if (server && best?.[0] !== 'file') mergeLibraryAdditions(data, server);
+    try { await pcEncLoad(data); } catch (e) { console.warn('[智库] 读氛围编码失败', e); }
     loadedFromServer = true; fileOk = serverOk;
     observed = pcIdSnap(data);
     loadInfo = { at: Date.now(), from: best ? best[0] : 'empty', found: found.map(f => [f[0], savedAt(f[1])]) };
@@ -2639,8 +2640,57 @@ function pcLocalBackup(json, now = false) {
     if (now || json.length < 300000) { if (pcLocalTimer) { clearTimeout(pcLocalTimer); pcLocalTimer = null; } write(); return; }
     if (!pcLocalTimer) pcLocalTimer = setTimeout(() => globalThis.requestIdleCallback ? requestIdleCallback(write, { timeout: 4000 }) : write(), 2500);
 }
+// 0.8.79：氛围编码另存一个文件，画师库存档里不再带（存档小、保存快）
+const ENC_FILE = 'zhiku_vibe_enc.json';
+let pcEncSafeSig = '';
+const PC_ENC_DROP = (k, v) => k === 'encodings' && v && typeof v === 'object' ? undefined : v;
+function pcEncSig(obj) {
+    let sig = '';
+    for (const g of Object.values(obj?.vibeGroups || {})) for (const v of g?.vibes || []) {
+        const e = v?.encodings; if (!e || typeof e !== 'object') continue;
+        for (const [k, x] of Object.entries(e)) if (x) sig += `${v.id}|${k}|${String(x).length};`;
+    }
+    return sig;
+}
+// 只有编码文件已经存好、而且内容对得上，才从存档里去掉编码；否则照旧一起存，不会丢
+function pcSerialize(obj) {
+    if (pcEncSafeSig && pcEncSig(obj) === pcEncSafeSig) return JSON.stringify(obj, PC_ENC_DROP);
+    return JSON.stringify(obj);
+}
+function pcEncMap(obj) {
+    const map = {};
+    for (const g of Object.values(obj?.vibeGroups || {})) for (const v of g?.vibes || []) if (v?.id && v.encodings && Object.values(v.encodings).some(Boolean)) map[v.id] = v.encodings;
+    return map;
+}
+async function pcEncFlush() {
+    if (!fileOk) return;
+    const sig = pcEncSig(data);
+    if (!sig || sig === pcEncSafeSig) return;
+    try {
+        const json = JSON.stringify(pcEncMap(data));
+        void idbSet('vibeEnc', json);
+        const up = await fileRequest('/api/files/upload', { method: 'POST', headers: headers(), body: JSON.stringify({ name: ENC_FILE, data: await pcBase64(json) }) });
+        if (!up.ok) throw new Error(`HTTP ${up.status}`);
+        const back = await fileRequest(`/user/files/${ENC_FILE}?t=${Date.now()}`, { cache: 'no-store' });
+        if (!back.ok || back.text !== json) throw new Error('读回不一致');
+        if (pcEncSig(data) === sig) pcEncSafeSig = sig;
+    } catch (e) { console.warn('[智库] 氛围编码另存失败，先照旧存在画师库里', e); }
+}
+async function pcEncLoad(target) {
+    const vibes = Object.values(target?.vibeGroups || {}).flatMap(g => g?.vibes || []).filter(v => v?.id);
+    if (!vibes.some(v => !v.encodings || !Object.values(v.encodings).some(Boolean))) return;
+    const maps = [];
+    try { const r = await fileRequest(`/user/files/${ENC_FILE}?t=${Date.now()}`, { cache: 'no-store' }); if (r.ok) maps.push(JSON.parse(r.text)); } catch {}
+    try { const raw = await idbGet('vibeEnc'); if (raw) maps.push(JSON.parse(raw)); } catch {}
+    for (const v of vibes) for (const m of maps) {
+        const e = m && typeof m === 'object' ? m[v.id] : null;
+        if (!e || typeof e !== 'object') continue;
+        v.encodings ||= {};
+        for (const [k, x] of Object.entries(e)) if (x && !v.encodings[k]) v.encodings[k] = x;
+    }
+}
 function snapshotData(now = false) {
-    const json = JSON.stringify(data);
+    const json = pcSerialize(data);
     // 大存档的 localStorage 备份会同步卡住界面：IndexedDB 一直有一份，localStorage 只在空闲时补
     pcLocalBackup(json, now);
     void idbSet('data', json);
@@ -2670,7 +2720,7 @@ async function writeNow(json) {
             await pcYield();
             const target = JSON.parse(json), jsonAt = savedAt(target), added = mergeLibraryAdditions(target, remote);
             target.options.savedAt = Math.max(jsonAt, savedAt(remote) + 1);
-            body = JSON.stringify(target);
+            body = pcSerialize(target);
             const keysBefore = JSON.stringify(pcIdSnap(data)), visibleAdded = mergeLibraryAdditions(data, remote);
             if (savedAt(data) <= jsonAt) data.options.savedAt = target.options.savedAt;
             observed = pcIdSnap(data);
@@ -2679,6 +2729,9 @@ async function writeNow(json) {
             if (visibleAdded) toastr.info(`已并入其它设备或页面新增的 ${visibleAdded} 项`, '智库');
             if (changed) emit();
             await pcYield();
+            const pcPre = pcEncSafeSig;
+            await pcEncFlush();
+            if (pcEncSafeSig !== pcPre && pcEncSig(target) === pcEncSafeSig) body = pcSerialize(target);
             await tryFile(body);
         };
         if (globalThis.navigator?.locks?.request) await navigator.locks.request('zhiku-library-save', save); else await save();
@@ -2799,7 +2852,7 @@ async function diagnoseStorage() {
     const fmt = t => t ? new Date(t).toLocaleString() : '没有时间';
     const cnt = value => { const r = backupData(value); return r ? `画师 ${Object.keys(r.artists).length} · 画师串 ${Object.keys(r.groups).length} · 存于 ${fmt(savedAt(r))}` : '没有有效数据'; };
     const L = [`智库 ${globalThis.__PC_VERSION || ''}`, `【现在用的】${cnt(data)}`, `打开时来源：${{ file: '数据文件', ext: '酒馆设置', idb: 'IndexedDB', local: 'localStorage', empty: '空的' }[loadInfo?.from] || '尚未读取'}`], bad = [];
-    try { const big = Object.entries(data).map(([k, v]) => [k, JSON.stringify(v ?? null).length]).sort((a, b) => b[1] - a[1]); const mb = n => (n / 1048576).toFixed(2) + 'MB'; L.push(`【存档大小】${mb(big.reduce((a, b) => a + b[1], 0))} · 最大的：${big.slice(0, 3).map(([k, n]) => k + ' ' + mb(n)).join('，')}`); } catch {}
+    try { const big = Object.entries(data).map(([k, v]) => [k, JSON.stringify(v ?? null, PC_ENC_DROP).length]).sort((a, b) => b[1] - a[1]); const mb = n => (n / 1048576).toFixed(2) + 'MB'; L.push(`【存档大小】${mb(big.reduce((a, b) => a + b[1], 0))} · 最大的：${big.slice(0, 3).map(([k, n]) => k + ' ' + mb(n)).join('，')}`); } catch {}
     L.push(`文件可写：${fileOk ? '是' : '否（本次只存备份）'} · 上次保存：${lastSave ? lastSave.backup ? '仅备份' : lastSave.ok ? '成功' : '失败：' + lastSave.err : '还没保存'}${saveTimer !== null ? ' · 有改动待保存' : ''}`);
     if (!loadedFromServer) bad.push('存档尚未读取完成');
     try {
@@ -7714,6 +7767,7 @@ function viewStudio(d) {
         <label class="pc-cfg">CFG <input type="number" step="0.1" data-st="nai3Scale" value="${esc(s.nai3Scale)}"></label>
       </div>
     </section>
+    ${Number(s.novelai_seed) > 0 ? `<div class="pc-row-between pc-mt-s" style="font-size:13px;padding:6px 10px;border-radius:10px;background:#f4efe4;border:1.5px dashed #c98a3e"><span>种子：固定 <b class="mono">${esc(s.novelai_seed)}</b> · 每张都会很像</span><button class="pc-pill tiny dashed" data-act="seedrandom">改回随机</button></div>` : ''}
     <button class="pc-btn dark big pc-mt" data-act="generate" ${st.busy ? 'disabled' : ''}>${seal()}${st.busy ? '<span class="pc-busy">生成中</span>' : '生成'}</button>
     ${st.result ? `
     <section class="pc-card pc-mt pc-result">
@@ -7823,11 +7877,13 @@ function bookList(d) {
     const groups = ui.bookTab === 'groups';
     let list = groups ? Object.values(d.groups) : Object.values(d.artists);
     if (ui.bookFilter === 'fav') list = list.filter(x => x.fav);
+    else if (ui.bookFilter === 'star') list = list.filter(x => Number(x.stars) > 0);
     else if (ui.bookFilter !== 'all') list = list.filter(x => x.collections?.includes(ui.bookFilter));
     const text = x => groups ? x.name + ' ' + x.note + ' ' + M.ticketString(d, { type: 'group', id: x.id }) : x.tag + ' ' + x.note;
     if (q) list = list.filter(x => text(x).toLowerCase().includes(q));
     if (groups) list.sort((a, b) => (b.usedAt || b.createdAt) - (a.usedAt || a.createdAt));
     else list.sort((a, b) => a.tag.localeCompare(b.tag));
+    if (ui.bookFilter === 'star') list.sort((a, b) => (Number(b.stars) || 0) - (Number(a.stars) || 0));
     return list.map(x => ({ type: groups ? 'group' : 'artist', id: x.id }));
 }
 
@@ -7903,6 +7959,7 @@ function openStringMaker({ text = '', random = false } = {}) {
 }
 
 function viewBook(d) {
+    if (ui.bookTab === 'trash') return pcTrashView(d);
     const cols = Object.values(d.collections);
     const view = d.options.bookView || 'grid';
     const refs = bookList(d);
@@ -7913,12 +7970,9 @@ function viewBook(d) {
       <div class="pc-vt"><button class="${view === 'grid' ? 'on' : ''}" data-act="bookview" data-v="grid" aria-label="网格">${SYM.grid}</button><button class="${view === 'list' ? 'on' : ''}" data-act="bookview" data-v="list" aria-label="列表">${SYM.list}</button></div>
       <button class="pc-add" data-act="register" aria-label="添加">＋</button>
     </div>
-    <div class="pc-seg pc-mt-s">
-      <button class="${ui.bookTab === 'groups' ? 'on' : ''}" data-act="booktab" data-tab="groups">画师组 · ${Object.keys(d.groups).length}</button>
-      <button class="${ui.bookTab === 'artists' ? 'on' : ''}" data-act="booktab" data-tab="artists">单个画师 · ${Object.keys(d.artists).length}</button>
-    </div>
+    ${pcBookSeg(d)}
     <div class="pc-chips">
-      ${[['all', '全部'], ['fav', '收藏'], ...cols.map(c => [c.id, c.name])].map(([k, t]) => `<button class="pc-pill ${ui.bookFilter === k ? 'on' : 'dashed'}" data-act="bookfilter" data-f="${esc(k)}" ${d.collections[k] ? `data-lp="col" data-col="${esc(k)}"` : ''}>${esc(t)}</button>`).join('')}
+      ${[['all', '全部'], ['fav', '收藏'], ['star', '★ 有星的'], ...cols.map(c => [c.id, c.name])].map(([k, t]) => `<button class="pc-pill ${ui.bookFilter === k ? 'on' : 'dashed'}" data-act="bookfilter" data-f="${esc(k)}" ${d.collections[k] ? `data-lp="col" data-col="${esc(k)}"` : ''}>${esc(t)}</button>`).join('')}
       <button class="pc-pill dashed" data-act="newcol">＋</button>
     </div>
     <div class="pc-chips wrap pc-book-acts">
@@ -7959,7 +8013,7 @@ function ticketCard(d, ref) {
     return `<article class="pc-ticket ${isActive ? 'active' : ''} ${banned ? 'banned' : ''}" data-act="${ui.selecting ? 'selpick' : 'open'}" data-lp="ticket" ${refAttr(ref)}>${ui.selecting ? `<span class="pc-selbox ${ui.picked.has(ref.id) ? 'on' : ''}">${ui.picked.has(ref.id) ? '✓' : ''}</span>` : ''}
       <div class="pc-ticket-img">${coverHtml(d, ref)}</div>
       ${ui.selecting ? '' : useBtn(d, ref)}${banned ? `<span class="pc-banbadge">${ref.type === 'artist' ? '黑名单' : '含黑名单画师'}</span>` : ''}
-      <div class="pc-ticket-text"><b>${esc(name)}</b><small>${esc(subLine(d, ref))}</small></div>
+      <div class="pc-ticket-text"><b>${esc(name)}${Number(it.stars) > 0 ? ` <span style="color:#c98a3e;font-weight:400">${'★'.repeat(Number(it.stars))}</span>` : ''}</b><small>${esc(subLine(d, ref))}</small></div>
     </article>`;
 }
 
@@ -10196,7 +10250,7 @@ function viewSettings(d) {
     const ban = setFold('ban', '画师黑名单', bl.length ? `${bl.length} 位` : '没有', `
       <div class="pc-dim small">拉黑的画师会在画师串里标红，批量生成例图时自动跳过。</div>
       ${bl.map(([k, b]) => `<div class="pc-banrow"><b class="mono">${esc(b.tag.replace(/^artist:/, ''))}</b><button class="pc-banrow-note" data-act="banedit" data-key="${esc(k)}">${esc(b.note) || '加备注'}</button><button class="pc-x" data-act="unban" data-tag="${esc(b.tag)}" aria-label="取消拉黑">×</button></div>`).join('')}
-      <button class="pc-pill dashed tiny pc-mt-s" data-act="banadd">＋ 拉黑画师</button>`);
+      <button class="pc-pill dashed tiny pc-mt-s" data-act="banadd">＋ 拉黑画师</button>`) + pcDeletedFold(d);
 
     const data = setFold('data', '数据', '导出 · 导入' + (zSettings() ? ' · 从智绘姬搬' : ''), `
       <div class="pc-dim small" style="margin-top:0">生成的图存在哪（聊天标记、生图页、历史生图）</div>
@@ -10530,12 +10584,13 @@ async function onClick(ev, outside = false) {
                 const t = M.resolveTicket(d, r);
                 if (r.type === 'artist') pcRecordDeleted(d, [t.item.tag], delNote);
                 const imgs = t.item.images.slice();
+                const pcTids = pcTrashPut(d, [r], delNote);
                 if (r.type === 'group') M.deleteGroup(d, r.id); else M.deleteArtist(d, r.id);
                 if (M.sameRef(ui.studio.sourceRef, r)) { ui.studio.sourceRef = null; saveStudio(); }
                 if (['artist', 'group'].includes(ui.view)) ui.view = 'book';
                 DOC.querySelector('.pc-sheet-backdrop')?.remove();
                 commit();
-                imgs.forEach(i => deleteImageFile(i.path));
+                pcUndoDelete(pcTids, `「${name}」`);
                 break;
             }
             case 'viewimg': {
@@ -11002,6 +11057,47 @@ async function onClick(ev, outside = false) {
             case 'batchchar': { const s = new Set(ui.batch.chars || []); const k = el.dataset.v; if (s.has(k)) s.delete(k); else s.add(k); ui.batch.chars = [...s]; render(); break; }
             case 'batchuseref': ui.batch.useRef = el.dataset.v === '1'; render(); break;
             case 'batchviewmode': ui.batch.view = el.dataset.v; render(); break;
+            case 'trashrestore': case 'trashrestoreall': {
+                const tids = act === 'trashrestoreall' ? pcTrash(d).map(e => e.tid) : [el.dataset.t];
+                const n = pcTrashRestore(d, tids);
+                if (!pcTrash(d).length) ui.bookTab = 'artists';
+                commit(); render();
+                toastr.success(`放回了 ${n} 个`, '智库', { timeOut: 1800 });
+                break;
+            }
+            case 'trashpurge': case 'trashempty': {
+                const tids = act === 'trashempty' ? pcTrash(d).map(e => e.tid) : [el.dataset.t];
+                if (!tids.length) break;
+                if (!(await confirmBox(act === 'trashempty' ? `清空回收站？${tids.length} 个会彻底删掉，例图也一起删，不能再放回。` : '彻底删掉？例图也一起删，不能再放回。', { ok: '彻底删', cancel: '算了' }))) break;
+                pcTrashPurge(d, tids);
+                if (!pcTrash(d).length) ui.bookTab = 'artists';
+                commit(); render();
+                break;
+            }
+            case 'batchstar': {
+                const key = el.dataset.k, v = Number(el.dataset.v) || 0, st = ui.batch.state;
+                if (!st) break;
+                const ref = pcBatchRowRef(d, key), it = ref && M.resolveTicket(d, ref)?.item;
+                const cur = Number(it ? it.stars : st.rowStars?.[key]) || 0, next = cur === v ? 0 : v;
+                if (it) { it.stars = next; commit({ silent: true }); } else (st.rowStars ||= {})[key] = next;
+                render(); break;
+            }
+            case 'batchretry': {
+                const st = ui.batch.state;
+                if (!st || st.running) break;
+                let n = 0;
+                for (const j of st.jobs) if (j.status === 'error' || j.status === 'wait') { j.status = 'wait'; j.error = ''; n++; }
+                if (!n) break;
+                st.run(); render();
+                toastr.info(`重新画 ${n} 张`, '批量生成例图', { timeOut: 1500 });
+                break;
+            }
+            case 'delnoteclear': case 'delnoteclearall': {
+                if (act === 'delnoteclearall') { if (!(await confirmBox('清掉全部「删过」的记录？', { ok: '清掉', cancel: '算了' }))) break; d.options.deletedNotes = {}; }
+                else delete d.options.deletedNotes?.[el.dataset.key];
+                commit(); render(); break;
+            }
+            case 'seedrandom': { N.settings().novelai_seed = '0'; N.save(); render(); toastr.info('种子改回随机了', '生成图片', { timeOut: 1500 }); break; }
             case 'batchnote': {
                 const key = el.dataset.k, st = ui.batch.state;
                 if (!st) break;
@@ -11076,11 +11172,11 @@ async function onClick(ev, outside = false) {
                 if (delNote == null) break;
                 pcRecordDeleted(d, ids.map(id => d.artists[id]?.tag), delNote);
                 const imgs = ids.flatMap(id => (d.artists[id].images || []).map(i => i.path));
+                const pcTids = pcTrashPut(d, ids.map(id => ({ type: 'artist', id })), delNote);
                 for (const id of ids) M.deleteArtist(d, id);
                 ui.picked.clear(); ui.selecting = false;
                 commit();
-                imgs.forEach(p => deleteImageFile(p));
-                toastr.success(`删掉了 ${ids.length} 位，留下 ${keep} 位`, '智库');
+                pcUndoDelete(pcTids, `${ids.length} 位，留下 ${keep} 位`);
                 break;
             }
             case 'selall': { const refs = bookList(d); if (ui.picked.size === refs.length) ui.picked.clear(); else refs.forEach(r => ui.picked.add(r.id)); render(); break; }
@@ -11094,11 +11190,11 @@ async function onClick(ev, outside = false) {
                 if (delNote == null) break;
                 if (type === 'artist') pcRecordDeleted(d, ids.map(id => d.artists[id]?.tag), delNote);
                 const imgs = ids.flatMap(id => itemOf(d, { type, id }).images.map(i => i.path));
+                const pcTids = pcTrashPut(d, ids.map(id => ({ type, id })), delNote);
                 for (const id of ids) { if (type === 'group') M.deleteGroup(d, id); else M.deleteArtist(d, id); }
                 ui.picked.clear(); ui.selecting = false;
                 commit();
-                imgs.forEach(p => deleteImageFile(p));
-                toastr.success(`删掉了 ${ids.length} 个`, '智库');
+                pcUndoDelete(pcTids, `${ids.length} 个`);
                 break;
             }
             case 'selban': {
@@ -11715,7 +11811,7 @@ async function onChangeEv(ev) {
         else s[el.dataset.st] = el.value.trim();
         N.save();
         if (el.dataset.st === 'naiKey' || el.dataset.st === 'naiSite') ui.naiTest = null;
-        if (el.dataset.st === 'size') render();
+        if (el.dataset.st === 'size' || el.dataset.st === 'novelai_seed') render();
         return;
     }
     if (el.dataset.stCheck) {
@@ -11895,6 +11991,115 @@ function pcBatchRowExtra(d, r, mini = false) {
       ${note ? `<button class="pc-bnote" data-act="batchnote" data-k="${k}">${esc(note)} ✎</button>` : `<button class="pc-bnote add" data-act="batchnote" data-k="${k}">＋ 备注</button>`}
       ${tag && !ban ? `<button class="pc-bnote ban" data-act="batchban" data-k="${k}">拉黑</button>` : ''}`;
 }
+// ───── 0.8.79：回收站（删掉的先放 7 天，能撤销、能放回）
+const PC_TRASH_DAYS = 7;
+function pcTrash(d) { return Array.isArray(d.options.trash) ? d.options.trash : (d.options.trash = []); }
+function pcTrashPut(d, refs, note = '') {
+    const out = [];
+    for (const r of refs) {
+        const it = r.type === 'group' ? d.groups[r.id] : d.artists[r.id];
+        if (!it) continue;
+        const groups = r.type === 'artist' ? Object.values(d.groups).flatMap(g => (g.members || []).filter(m => m.artistId === r.id).map(m => ({ gid: g.id, weight: m.weight ?? 1 }))) : [];
+        const e = { tid: M.uid('tr_'), type: r.type, item: structuredClone(it), groups, at: Date.now(), note: note || '' };
+        pcTrash(d).unshift(e); out.push(e.tid);
+    }
+    return out;
+}
+// 放回时换一个新 id：旧 id 已经记成「删过」，用旧 id 会被别的设备的记录再删一次
+function pcTrashRestore(d, tids) {
+    const list = pcTrash(d); let n = 0;
+    for (const tid of tids) {
+        const i = list.findIndex(e => e.tid === tid); if (i < 0) continue;
+        const e = list[i]; list.splice(i, 1);
+        if (e.type === 'artist') {
+            const exist = M.findArtistByTag(d, e.item.tag);
+            let id;
+            if (exist) {
+                id = exist.id;
+                const have = new Set((exist.images || []).map(x => x.path));
+                for (const im of e.item.images || []) if (!have.has(im.path)) (exist.images ||= []).push(im);
+                if (!exist.note && e.item.note) exist.note = e.item.note;
+                if (!exist.stars && e.item.stars) exist.stars = e.item.stars;
+            } else { id = M.uid('a_'); d.artists[id] = { ...structuredClone(e.item), id }; }
+            for (const g of e.groups) { const grp = d.groups[g.gid]; if (grp && !grp.members.some(m => m.artistId === id)) grp.members.push({ artistId: id, weight: g.weight ?? 1 }); }
+            if (d.options.deletedNotes) delete d.options.deletedNotes[M.artistKey(M.normalizeArtistTag(e.item.tag))];
+        } else {
+            const id = M.uid('g_'), g = { ...structuredClone(e.item), id };
+            g.members = (g.members || []).filter(m => d.artists[m.artistId]);
+            d.groups[id] = g;
+        }
+        n++;
+    }
+    return n;
+}
+function pcTrashPurge(d, only = null) {
+    const list = pcTrash(d), cut = Date.now() - PC_TRASH_DAYS * 864e5;
+    const drop = list.filter(e => only ? only.includes(e.tid) : e.at < cut);
+    if (!drop.length) return 0;
+    d.options.trash = list.filter(e => !drop.includes(e));
+    const live = new Set([...Object.values(d.artists), ...Object.values(d.groups), ...d.options.trash.map(e => e.item)].flatMap(x => (x.images || []).map(i => i.path)));
+    for (const e of drop) for (const i of e.item.images || []) if (i.path && !live.has(i.path)) deleteImageFile(i.path);
+    return drop.length;
+}
+function pcUndoBar(text, onUndo) {
+    DOC.getElementById('pc-undobar')?.remove();
+    const el = DOC.createElement('div'); el.id = 'pc-undobar';
+    el.setAttribute('style', 'position:fixed;left:12px;right:12px;bottom:max(18px,env(safe-area-inset-bottom));z-index:2147483646;display:flex;align-items:center;gap:10px;max-width:520px;margin:0 auto;padding:10px 14px;border-radius:14px;background:#3a2e26;color:#f4efe4;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25);box-sizing:border-box');
+    el.innerHTML = `<span style="flex:1">${esc(text)}</span><button type="button" style="font:inherit;border:0;border-radius:999px;padding:4px 14px;background:#f4efe4;color:#3a2e26;cursor:pointer">撤销</button>`;
+    el.querySelector('button').addEventListener('click', ev => { ev.stopPropagation(); el.remove(); onUndo(); });
+    pcMount(el);
+    setTimeout(() => el.remove(), 9000);
+}
+function pcUndoDelete(tids, what) {
+    pcUndoBar(`删掉了 ${what} · 回收站里 ${PC_TRASH_DAYS} 天内能放回`, () => {
+        const n = pcTrashRestore(getData(), tids);
+        commit(); render();
+        toastr.success(`放回了 ${n} 个`, '智库', { timeOut: 1800 });
+    });
+}
+function pcBookSeg(d) {
+    const n = pcTrash(d).length;
+    const bs = n ? ' style="flex:1;min-width:0;white-space:nowrap;padding-left:4px;padding-right:4px"' : '';
+    return `<div class="pc-seg pc-mt-s"${n ? ' style="display:flex;flex-wrap:nowrap"' : ''}>
+      <button${bs} class="${ui.bookTab === 'groups' ? 'on' : ''}" data-act="booktab" data-tab="groups">画师组 · ${Object.keys(d.groups).length}</button>
+      <button${bs} class="${ui.bookTab === 'artists' ? 'on' : ''}" data-act="booktab" data-tab="artists">单个画师 · ${Object.keys(d.artists).length}</button>
+      ${n || ui.bookTab === 'trash' ? `<button${bs || ' style="flex:1;min-width:0;white-space:nowrap;padding-left:4px;padding-right:4px"'} class="${ui.bookTab === 'trash' ? 'on' : ''}" data-act="booktab" data-tab="trash">回收站 · ${n}</button>` : ''}
+    </div>`;
+}
+function pcTrashView(d) {
+    if (pcTrashPurge(d)) commit({ silent: true });
+    const list = pcTrash(d);
+    const fmt = t => { const x = new Date(t); return `${x.getMonth() + 1}/${x.getDate()} ${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`; };
+    const left = e => Math.max(1, Math.ceil((e.at + PC_TRASH_DAYS * 864e5 - Date.now()) / 864e5));
+    const row = e => {
+        const name = e.type === 'group' ? e.item.name || '没起名的画师组' : String(e.item.tag || '').replace(/^artist:/, '');
+        const n = (e.item.images || []).length;
+        return `<div class="pc-li" style="display:flex;gap:10px;align-items:center">
+          <div class="pc-grow" style="min-width:0"><b class="mono" style="word-break:break-all">${esc(name)}</b>
+            <div class="pc-dim small">${e.type === 'group' ? '画师组' : '画师'} · 删于 ${fmt(e.at)} · 还剩 ${left(e)} 天${n ? ` · ${n} 张例图` : ''}${e.note ? ` · ${esc(e.note)}` : ''}</div></div>
+          <button class="pc-pill tiny on" data-act="trashrestore" data-t="${esc(e.tid)}">放回</button>
+          <button class="pc-pill tiny dashed danger" data-act="trashpurge" data-t="${esc(e.tid)}">彻底删</button></div>`;
+    };
+    return `${pcBookSeg(d)}
+    <section class="pc-card pc-pad pc-mt-s"><div class="pc-dim small" style="margin:0">删掉的画师和画师组先放在这里，例图也先留着，${PC_TRASH_DAYS} 天后自动清掉。放回后会回到原来的画师组里。</div>
+    ${list.length ? `<div class="pc-actions wrap pc-mt-s"><button class="pc-pill dashed tiny" data-act="trashrestoreall">全部放回</button><button class="pc-pill tiny danger" data-act="trashempty">清空回收站</button></div>` : ''}</section>
+    <div class="pc-mt-s">${list.map(row).join('') || empty('回收站是空的', '删掉的画师会先放在这里。')}</div>
+    <div style="height:24px"></div>`;
+}
+// ───── 0.8.79：批量打星
+function pcBatchStars(d, r) {
+    const ref = pcBatchRowRef(d, r.key), it = ref && M.resolveTicket(d, ref)?.item;
+    const v = Number(it ? it.stars : ui.batch.state?.rowStars?.[r.key]) || 0;
+    return `<span class="pc-bstars">${[1, 2, 3].map(n => `<button data-act="batchstar" data-k="${esc(r.key)}" data-v="${n}" class="${n <= v ? 'on' : ''}" aria-label="${n} 星">★</button>`).join('')}</span>`;
+}
+// ───── 0.8.79：删过的画师（设置里管理）
+function pcDeletedFold(d) {
+    const dl = Object.entries(d.options.deletedNotes || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+    return setFold('deleted', '删过的画师', dl.length ? `${dl.length} 位` : '没有', `
+      <div class="pc-dim small">删画师时写了理由的记在这里，批量里再粘贴到会提示「删过：理由」。清掉后就不提示了。</div>
+      ${dl.map(([k, x]) => `<div class="pc-banrow"><b class="mono">${esc(String(x.tag || '').replace(/^artist:/, ''))}</b><span class="pc-dim small pc-grow" style="padding:0 8px">${esc(x.note)}</span><button class="pc-x" data-act="delnoteclear" data-key="${esc(k)}" aria-label="清掉">×</button></div>`).join('')}
+      ${dl.length > 1 ? '<button class="pc-pill dashed tiny pc-mt-s" data-act="delnoteclearall">全部清掉</button>' : ''}`);
+}
 function viewBatchResults(d, head) {
     const b = ui.batch, st = b.state;
     const done = st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length;
@@ -11910,16 +12115,16 @@ function viewBatchResults(d, head) {
     if (table) {
         const { rows, cols, cell } = batchLayout(d, st.jobs);
         body = `<div class="pc-btable" style="grid-template-columns:72px repeat(${cols.length},minmax(84px,1fr))"><span></span>${cols.map(c => `<span class="pc-bth">${esc(c.name)}</span>`).join('')}
-          ${rows.map((r, ri) => `<span class="pc-btr" title="${esc(r.text)}">${esc(r.name)}${r.inLib ? '' : '<em>不在库里</em>'}${pcBatchRowExtra(d, r)}</span>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); return i === undefined ? '<span></span>' : cellHtml(st.jobs[i], i); }).join('')}`).join('')}</div>`;
+          ${rows.map((r, ri) => `<span class="pc-btr" title="${esc(r.text)}">${esc(r.name)}${r.inLib ? '' : '<em>不在库里</em>'}${pcBatchStars(d, r)}${pcBatchRowExtra(d, r)}</span>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); return i === undefined ? '<span></span>' : cellHtml(st.jobs[i], i); }).join('')}`).join('')}</div>`;
     } else body = `<div class="pc-grid2 pc-bgrid">${st.jobs.map(cellHtml).join('')}</div>`;
     const any = st.jobs.some(j => j.status === 'done');
-    return `${head}<style>.pc-studionote{margin-top:6px;font-size:13px;line-height:1.5;padding:5px 9px;border-radius:8px;background:rgba(120,90,60,.1);cursor:pointer;white-space:pre-wrap;word-break:break-word}.pc-bnote{display:block;margin-top:4px;max-width:100%;text-align:left;font:inherit;font-size:11px;line-height:1.35;padding:2px 6px;border-radius:7px;border:0;background:#efe6d6;color:#3a2e26;cursor:pointer;word-break:break-all}.pc-bnote.add,.pc-bnote.ban{display:inline-block;background:#f4efe4;border:1.5px dashed var(--pc-dash);border-radius:999px;margin-right:4px}.pc-bnote.ban{color:#a2593f}.pc-bnote.mini{display:inline;margin:0 0 0 4px;padding:0 4px;background:transparent}.pc-btr .pc-bban,.pc-btr .pc-bdel{display:block;font-style:normal;color:#9b4f45;background:#f4efe4;border-radius:7px;padding:2px 6px;font-size:11px;margin-top:4px;opacity:1}.pc-btable{display:grid;gap:6px;overflow-x:auto;align-items:start;scrollbar-width:none}.pc-btable::-webkit-scrollbar{display:none}.pc-bth{font-size:12px;text-align:center;opacity:.75;align-self:end;line-height:1.3}.pc-btr{font-size:12px;line-height:1.35;align-self:center;word-break:break-all}.pc-btr em{display:block;font-style:normal;font-size:10.5px;opacity:.6}.pc-btable .pc-bcell b{display:none}.pc-bsaved{position:absolute;left:5px;bottom:5px;text-decoration:none;font-size:10.5px;padding:0 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff}.pc-bcell{position:relative}</style>
+    return `${head}<style>.pc-studionote{margin-top:6px;font-size:13px;line-height:1.5;padding:5px 9px;border-radius:8px;background:rgba(120,90,60,.1);cursor:pointer;white-space:pre-wrap;word-break:break-word}.pc-bnote{display:block;margin-top:4px;max-width:100%;text-align:left;font:inherit;font-size:11px;line-height:1.35;padding:2px 6px;border-radius:7px;border:0;background:#efe6d6;color:#3a2e26;cursor:pointer;word-break:break-all}.pc-bnote.add,.pc-bnote.ban{display:inline-block;background:#f4efe4;border:1.5px dashed var(--pc-dash);border-radius:999px;margin-right:4px}.pc-bnote.ban{color:#a2593f}.pc-bnote.mini{display:inline;margin:0 0 0 4px;padding:0 4px;background:transparent}.pc-btr .pc-bban,.pc-btr .pc-bdel{display:block;font-style:normal;color:#9b4f45;background:#f4efe4;border-radius:7px;padding:2px 6px;font-size:11px;margin-top:4px;opacity:1}.pc-bstars{display:block;margin-top:3px;white-space:nowrap}.pc-bstars button{font:inherit;font-size:15px;line-height:1;border:0;background:transparent;padding:0 1px;color:#c7b8a0;cursor:pointer}.pc-bstars button.on{color:#c98a3e}.pc-btable{display:grid;gap:6px;overflow-x:auto;align-items:start;scrollbar-width:none}.pc-btable::-webkit-scrollbar{display:none}.pc-bth{font-size:12px;text-align:center;opacity:.75;align-self:end;line-height:1.3}.pc-btr{font-size:12px;line-height:1.35;align-self:center;word-break:break-all}.pc-btr em{display:block;font-style:normal;font-size:10.5px;opacity:.6}.pc-btable .pc-bcell b{display:none}.pc-bsaved{position:absolute;left:5px;bottom:5px;text-decoration:none;font-size:10.5px;padding:0 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff}.pc-bcell{position:relative}</style>
     <section class="pc-card pc-pad pc-mt">
       <div class="pc-row-between"><b>${done} / ${st.jobs.length} 张</b>
         <div class="pc-chips" style="margin:0">${st.running ? `<button class="pc-round" data-act="batchpause" aria-label="${st.paused ? '继续' : '暂停'}">${st.paused ? '▶' : '❚❚'}</button><button class="pc-round" data-act="batchstop" aria-label="停止">■</button>` : ''}</div></div>
       <div class="pc-prog"><i style="width:${st.jobs.length ? Math.round(done / st.jobs.length * 100) : 0}%"></i></div>
       <div class="pc-dim small pc-mt-s">画师库里已有的串（不画角色时）出的图会自动存进例图，标着「已存」；别的都只在这里，勾选了再存，或者整包导出。${st.running ? '关掉这一页也会继续生成。' : ''}</div>
-      <div class="pc-actions wrap"><button class="pc-btn" data-act="batchsetup">${st.running ? '‹ 回到设置，再加一批' : '‹ 回到设置，再来一批'}</button></div>
+      <div class="pc-actions wrap">${(() => { if (st.running) return ''; const err = st.jobs.filter(j => j.status === 'error').length, rest = st.jobs.filter(j => j.status === 'wait').length; return err + rest ? `<button class="pc-btn dark" data-act="batchretry">${err && rest ? `重画失败的 ${err} 张、接着画剩下的 ${rest} 张` : err ? `重画失败的 ${err} 张` : `接着画剩下的 ${rest} 张`}</button>` : ''; })()}<button class="pc-btn" data-act="batchsetup">${st.running ? '‹ 回到设置，再加一批' : '‹ 回到设置，再来一批'}</button></div>
     </section>
     <div class="pc-seg pc-mt"><button class="${table ? 'on' : ''}" data-act="batchviewmode" data-v="table">对照表</button><button class="${!table ? 'on' : ''}" data-act="batchviewmode" data-v="list">一张张看</button></div>
     <div class="pc-mt-s">${body}</div>
@@ -11945,7 +12150,7 @@ async function batchSavePicked(d) {
                 || (single ? { type: 'artist', id: M.ensureArtist(d, p.members[0].tag).id } : M.createFromString(d, { name: j.name || '', text: j.text, note: '批量生成时存的' }));
             if (!ref) continue;
             made++;
-            { const rn = ui.batch.state.rowNotes?.['t:' + j.text], it = M.resolveTicket(d, ref)?.item; if (rn && it && !it.note) it.note = rn; if (it && it.note === '批量生成时存的' && rn) it.note = rn; }
+            { const rn = ui.batch.state.rowNotes?.['t:' + j.text], it = M.resolveTicket(d, ref)?.item; if (rn && it && !it.note) it.note = rn; if (it && it.note === '批量生成时存的' && rn) it.note = rn; const rs = ui.batch.state.rowStars?.['t:' + j.text]; if (rs && it && !it.stars) it.stars = rs; }
             for (const o of ui.batch.state.jobs) if (batchRowKey(o) === 't:' + j.text) o.ref = ref;
         }
         const tpl = d.templates[j.templateId];
