@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.73（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.74（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.73';
+globalThis.__PC_VERSION = '0.8.74';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -4289,10 +4289,10 @@ async function makeBatchImage(job) {
     const d = getData();
     const tpl = d.templates[job.templateId] || d.templates.sfw_bust;
     const ref = job.ref && M.resolveTicket(d, job.ref) ? job.ref : null;
-    if (ref && !job.char) return { image: await makeSampleFor(ref, tpl.id, { soloWeight: job.soloWeight ?? 1 }), saved: true };
+    if (ref && !job.char && job.save !== false) return { image: await makeSampleFor(ref, tpl.id, { soloWeight: job.soloWeight ?? 1 }), saved: true };
     let fixed = ref ? M.ticketString(d, ref) : String(job.text || '');
     const neg0 = ref ? M.ticketNeg(d, ref) : '';
-    const w = Number(d.options.sampleSoloWeight) || 1;
+    const w = Number(job.soloWeight ?? d.options.sampleSoloWeight) || 1;
     const one = M.parseArtistString(fixed);
     if (w !== 1 && one.members.length === 1 && Math.abs(one.members[0].weight - 1) < 0.001 && !new RegExp(`::\\s*${one.members[0].tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*::`).test(fixed)) fixed = fixed.replace(one.members[0].tag, `${w}::${one.members[0].tag}::`);
     if (!job.char) return { image: await generateSample({ fixed, template: tpl, neg: neg0 }), saved: false };
@@ -9419,7 +9419,8 @@ function viewBatch(d) {
       <label class="pc-switch"><input type="checkbox" data-opt="sampleSameSeed" ${d.options.sampleSameSeed !== false ? 'checked' : ''}><span></span>所有画师用同一个种子<small>同一张脸、同一个姿势，只比画风${Number(d.options.sampleSeed) > 0 ? ` · 种子 ${d.options.sampleSeed}` : ''}</small></label>
       ${d.options.sampleSameSeed !== false && Number(d.options.sampleSeed) > 0 ? '<button class="pc-pill dashed tiny" data-act="newsampleseed">换一个种子</button>' : ''}
       <div class="pc-row-between"><span>共 ${names.length} 串${b.who === 'chars' ? ` × ${whoChars.length} 个角色` : ''}，会生成 <b>${count}</b> 张</span><span class="pc-dim small">会用掉 NovelAI 点数</span></div>
-      <div class="pc-dim small">画师库里已有的串，出的图照旧存进例图；不在库里的<b>不会自动建成画师串</b>，看中了再勾选存进去。</div>
+      <label class="pc-switch"><input type="checkbox" data-opt="batchSaveLib" ${d.options.batchSaveLib !== false ? 'checked' : ''}><span></span>画师库里已有的，出的图自动存进例图<small>关掉的话，库里已有的也只放在结果里，看中了勾选「存进画师库」再存。画角色的图一直不自动存。</small></label>
+      <div class="pc-dim small">不在库里的<b>不会自动建成画师串</b>，看中了再勾选存进去。</div>
     </section>
     ${batchWhoCard(d)}
     <details class="pc-fold"><summary><b>例图提示词</b><i>${esc(tplText)}</i></summary><div class="pc-fold-in">
@@ -11971,7 +11972,7 @@ function startBatch() {
         for (const t of tpls) {
             const tpl = d.templates[t];
             if (who.length) for (const c of who) jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, char: c.key, charName: c.name, charTags: C.fixedTags(c, { nsfw: !!tpl?.nsfw }), charNeg: c.negative || '', charRef: ui.batch.useRef !== false && c.charRef && d.charRefGroups?.[c.charRef] ? c.charRef : '' });
-            else jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, char: '', skip: !!(ui.batch.skipExisting && item?.images.some(i => i.template === t)) });
+            else jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, save: d.options.batchSaveLib !== false, char: '', skip: !!(ui.batch.skipExisting && item?.images.some(i => i.template === t)) });
         }
     }
     commit();
