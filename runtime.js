@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.79（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.80（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.79';
+globalThis.__PC_VERSION = '0.8.80';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3050,6 +3050,12 @@ function settings() {
     }
     for (const [k, v] of Object.entries(DEFAULTS)) if (s[k] === undefined || s[k] === null) s[k] = v;
     swapModelParams(s);
+    if (pcModelOverride && pcModelOverride !== s.novelaimode) {
+        const p = (s.modelParams && typeof s.modelParams === 'object' && s.modelParams[pcModelOverride]) || {};
+        const v = { ...s, novelaimode: pcModelOverride, modelParamsLast: pcModelOverride };
+        for (const k of modelParamKeys()) if (p[k] != null) v[k] = p[k];
+        return v;
+    }
     return s;
 }
 const save = () => saveSettingsDebounced();
@@ -3744,6 +3750,7 @@ async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {
         if (!r.ok) throw Object.assign(new Error(explain(r.status, text, true)),{status:r.status,retryAfter:r.headers?.get('Retry-After'),retryable:r.status===500});
         let b64 = text.trim();
         try { const j = JSON.parse(b64); b64 = j.images?.[0] || j.image || j.data || b64; } catch { /* 原样就是 base64 */ }
+        anlasSoon();
         return { image: toDataUrl(b64), sent };
     }
     const key = authKey();
@@ -3756,7 +3763,7 @@ async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {
     },responseInfo);
     const buf = new Uint8Array(await r.arrayBuffer());
     if (!r.ok) throw Object.assign(new Error(explain(r.status, new TextDecoder().decode(buf))),{status:r.status,retryAfter:r.headers?.get('Retry-After')});
-    try{return {image:await imageFromResponse(buf,responseInfo),sent};}catch(e){siteForget('/ai/generate-image');throw e;}
+    try{const out={image:await imageFromResponse(buf,responseInfo),sent};anlasSoon();return out;}catch(e){siteForget('/ai/generate-image');throw e;}
 }
 
 function toDataUrl(b64) {
@@ -3953,6 +3960,59 @@ async function testConnection() {
         return { ok: false, text: '连不上：' + (e?.message || e) };
     }
 }
+// ───── 0.8.80：批量指定模型（只在这一张生成期间换，不动生图页的设置）
+var pcModelOverride = null;
+async function withModel(model, fn) {
+    const prev = pcModelOverride;
+    pcModelOverride = model && /^nai-diffusion/.test(model) ? model : null;
+    try { return await fn(); } finally { pcModelOverride = prev; }
+}
+// ───── 0.8.80：点数和 V5 额度（生图后自动刷新）
+var pcAnlas = null, pcAnlasTimer = null, pcAnlasBusy = false;
+const pcAnlasSubs = new Set();
+// NovelAI 没公开 V5 额度字段叫什么：把返回里像「额度」的数字都找出来显示
+function pcScanQuota(j) {
+    const out = [];
+    const walk = (o, path, depth) => {
+        if (!o || typeof o !== 'object' || depth > 5) return;
+        for (const [k, v] of Object.entries(o)) {
+            const p = path ? path + '.' + k : k;
+            if (v && typeof v === 'object') walk(v, p, depth + 1);
+            else if (typeof v === 'number' && /v5|quota|allowance|refill|recover|regen|bucket|budget|remaining|usage|limit/i.test(p) && !/trainingSteps|maxPriority|moduleTraining|contextTokens|textLength|tier|expires|actions/i.test(p)) out.push([p, v]);
+        }
+    };
+    walk(j, '', 0);
+    return out;
+}
+async function anlasRefresh(force = false) {
+    const s = settings();
+    if (s.naiMode !== 'key' && s.naiMode !== 'tavern') return pcAnlas;
+    if (!force && pcAnlas && Date.now() - pcAnlas.at < (pcAnlas.anlas == null ? 5000 : 30000)) return pcAnlas;
+    if (pcAnlasBusy) return pcAnlas;
+    pcAnlasBusy = true;
+    try {
+        let j;
+        if (s.naiMode === 'tavern') {
+            const r = await http('/api/novelai/status', { method: 'POST', headers: getRequestHeaders(), body: '{}' });
+            if (!r.ok) throw new Error(`酒馆返回 ${r.status}`);
+            j = await r.json();
+        } else {
+            const key = authKey();
+            if (!key) return pcAnlas;
+            const r = await http('https://api.novelai.net/user/subscription', { headers: { Authorization: 'Bearer ' + key } });
+            if (!r.ok) throw new Error(`NovelAI 返回 ${r.status}`);
+            j = await r.json();
+        }
+        const t = j?.trainingStepsLeft || j?.subscription?.trainingStepsLeft;
+        const anlas = t ? (t.fixedTrainingStepsLeft || 0) + (t.purchasedTrainingSteps || 0) : null;
+        pcAnlas = { at: Date.now(), anlas, prev: pcAnlas?.anlas ?? null, quota: pcScanQuota(j), raw: j };
+    } catch (e) {
+        pcAnlas = { ...(pcAnlas || {}), at: Date.now(), error: e instanceof TypeError ? '这台设备连不上 api.novelai.net' : String(e?.message || e) };
+    } finally { pcAnlasBusy = false; }
+    for (const f of pcAnlasSubs) try { f(pcAnlas); } catch {}
+    return pcAnlas;
+}
+function anlasSoon() { if (!pcAnlasSubs.size) return; clearTimeout(pcAnlasTimer); pcAnlasTimer = setTimeout(() => anlasRefresh(true), 2500); }
 function anlasText(j) {
     const t = j?.trainingStepsLeft || j?.subscription?.trainingStepsLeft;
     if (!t) return '';
@@ -4087,7 +4147,7 @@ async function inpaintRequest({ image, mask, prompt, negative, width, height, st
     return imageFromResponse(buf);
 }
 
-return { adoptModelParams, comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
+return { withModel, anlasRefresh, anlasNow: () => pcAnlas, onAnlas: f => { pcAnlasSubs.add(f); return () => pcAnlasSubs.delete(f); }, adoptModelParams, comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
 })();
 
 // ───── engine.js ─────
@@ -4417,7 +4477,7 @@ function createBatch(jobs, { onUpdate } = {}) {
             if (job.status === 'done' || job.status === 'skip') continue;
             job.status = 'run'; tick();
             try {
-                const r = await makeBatchImage(job);
+                const r = await N.withModel(job.model || '', () => makeBatchImage(job));
                 job.image = r.image; job.saved = r.saved;
                 job.status = 'done';
             } catch (e) {
@@ -7769,6 +7829,7 @@ function viewStudio(d) {
     </section>
     ${Number(s.novelai_seed) > 0 ? `<div class="pc-row-between pc-mt-s" style="font-size:13px;padding:6px 10px;border-radius:10px;background:#f4efe4;border:1.5px dashed #c98a3e"><span>种子：固定 <b class="mono">${esc(s.novelai_seed)}</b> · 每张都会很像</span><button class="pc-pill tiny dashed" data-act="seedrandom">改回随机</button></div>` : ''}
     <button class="pc-btn dark big pc-mt" data-act="generate" ${st.busy ? 'disabled' : ''}>${seal()}${st.busy ? '<span class="pc-busy">生成中</span>' : '生成'}</button>
+    ${pcAnlasLine('text-align:center;margin-top:6px')}
     ${st.result ? `
     <section class="pc-card pc-mt pc-result">
       <img src="${esc(st.result)}" alt="生成结果" data-act="viewimg" data-src="${esc(st.result)}">
@@ -9514,7 +9575,9 @@ function viewBatch(d) {
       ${b.who === 'chars' ? '' : `<label class="pc-switch"><input type="checkbox" data-bind-check="batch.skipExisting" ${b.skipExisting ? 'checked' : ''}><span></span>已经有这种例图的画师跳过</label>`}
       <label class="pc-switch"><input type="checkbox" data-opt="sampleSameSeed" ${d.options.sampleSameSeed !== false ? 'checked' : ''}><span></span>所有画师用同一个种子<small>同一张脸、同一个姿势，只比画风${Number(d.options.sampleSeed) > 0 ? ` · 种子 ${d.options.sampleSeed}` : ''}</small></label>
       ${d.options.sampleSameSeed !== false && Number(d.options.sampleSeed) > 0 ? '<button class="pc-pill dashed tiny" data-act="newsampleseed">换一个种子</button>' : ''}
-      <div class="pc-row-between"><span>共 ${names.length} 串${b.who === 'chars' ? ` × ${whoChars.length} 个角色` : ''}，会生成 <b>${count}</b> 张</span><span class="pc-dim small">会用掉 NovelAI 点数</span></div>
+      ${pcBatchModelPick(d)}
+      <div class="pc-row-between"><span>共 ${names.length} 串${b.who === 'chars' ? ` × ${whoChars.length} 个角色` : ''}，会生成 <b>${count}</b> 张</span><span class="pc-dim small">${pcBatchModelNow(d) ? esc((N.MODELS.find(x => x[0] === pcBatchModelNow(d)) || [0, ''])[1].replace('NAI Diffusion ', '')) + ' · ' : ''}会用掉 NovelAI 点数</span></div>
+      ${pcAnlasLine('text-align:right;margin-top:2px')}<div style="display:none"></div>
       <label class="pc-switch"><input type="checkbox" data-opt="batchSaveLib" ${d.options.batchSaveLib !== false ? 'checked' : ''}><span></span>画师库里已有的，出的图自动存进例图<small>关掉的话，库里已有的也只放在结果里，看中了勾选「存进画师库」再存。画角色的图一直不自动存。</small></label>
       <div class="pc-dim small">不在库里的<b>不会自动建成画师串</b>，看中了再勾选存进去。</div>
     </section>
@@ -10159,6 +10222,7 @@ function viewSettings(d) {
       <label class="pc-field"><span>站点地址</span><input data-st="naiSite" value="${esc(n.naiSite)}" placeholder="https://…"></label>
       <label class="pc-field"><span>站点给的 key</span><input data-st="naiSiteKey" type="password" value="${esc(n.naiSiteKey)}"></label>
       <label class="pc-switch"><input type="checkbox" data-st-check="naiSiteSimple" ${String(n.naiSiteSimple) === 'true' ? 'checked' : ''}><span></span>中转站兼容模式<small>生图页正常、聊天里出图却是满屏噪点 / 乱码图时打开：几个人的外貌合成一段发，不带长相参考图（有些中转站不支持分角色和角色参考）。漫画不受影响。</small></label>` : ''}
+      ${pcAnlasLine('margin-top:8px')}${['key', 'tavern'].includes(N.settings().naiMode) ? '<button class="pc-pill dashed tiny pc-mt-s" data-act="anlasraw">复制账户信息（V5 额度没显示时发我）</button>' : ''}
       <div class="pc-row-between pc-mt-s"><button class="pc-btn dark" data-act="naitest">测试</button><span class="${ui.naiTest?.ok && !ui.naiTest?.warn ? '' : 'pc-warn-text'}">${ui.naiTest ? (ui.naiTest.warn ? '! ' : ui.naiTest.ok ? '✓ ' : '✗ ') + esc(ui.naiTest.text) : ''}</span></div>
       <label class="pc-switch pc-mt-s span2"><input type="checkbox" data-st-check="modelParamsOn" ${String(n.modelParamsOn) !== 'false' ? 'checked' : ''}><span></span>每个模型记住自己的参数<small>步数、CFG、采样器、噪声计划、Rescale 跟着模型走：在 4.5 上调好一次，以后换回 4.5（设置、生图页、画师串绑定的模型）就自动换上那套</small></label>
       <label class="pc-field"><span>模型</span><select data-st="novelaimode">${N.MODELS.map(([v, t]) => `<option value="${v}" ${v === n.novelaimode ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -11098,6 +11162,14 @@ async function onClick(ev, outside = false) {
                 commit(); render(); break;
             }
             case 'seedrandom': { N.settings().novelai_seed = '0'; N.save(); render(); toastr.info('种子改回随机了', '生成图片', { timeOut: 1500 }); break; }
+            case 'anlasraw': {
+                const a = await N.anlasRefresh(true);
+                if (!a?.raw) { toastr.warning(a?.error ? `查不到：${a.error}` : '现在的连接方式查不了点数', '智库'); break; }
+                const text = JSON.stringify(a.raw, null, 1);
+                try { await P.navigator.clipboard.writeText(text); toastr.success('账户信息复制好了，发我之前看一眼有没有不想给人看的', '智库', { timeOut: 3500 }); }
+                catch { await promptText('账户信息（长按全选复制）', text, true); }
+                break;
+            }
             case 'batchnote': {
                 const key = el.dataset.k, st = ui.batch.state;
                 if (!st) break;
@@ -11810,7 +11882,7 @@ async function onChangeEv(ev) {
         if (el.dataset.st === 'size') { const [w, h] = el.value.split('x'); s.novelai_width = w; s.novelai_height = h; }
         else s[el.dataset.st] = el.value.trim();
         N.save();
-        if (el.dataset.st === 'naiKey' || el.dataset.st === 'naiSite') ui.naiTest = null;
+        if (el.dataset.st === 'naiKey' || el.dataset.st === 'naiSite' || el.dataset.st === 'naiMode') { ui.naiTest = null; void N.anlasRefresh(true); }
         if (el.dataset.st === 'size' || el.dataset.st === 'novelai_seed') render();
         return;
     }
@@ -11823,7 +11895,7 @@ async function onChangeEv(ev) {
     if (el.dataset.bind === 'batch.text') { render(); return; }
     if (el.dataset.opt) { d.options[el.dataset.opt] = el.checked; if (el.dataset.opt === 'imageExpanded') __mod_marker.applyImageDefault(); commit(); return; }
     if (el.hasAttribute('data-illmax')) { try { d.options.illustMax = illustrationCount(el.value); commit(); } catch(e) { el.value = String(d.options.illustMax ?? 1); toastr.warning(e.message, '智库'); } return; }
-    if (el.dataset.optstr) { d.options[el.dataset.optstr] = el.value.trim(); if (['imageStartTag','imageEndTag'].includes(el.dataset.optstr)) __mod_marker.syncRegex(); commit({ silent: true }); return; }
+    if (el.dataset.optstr) { d.options[el.dataset.optstr] = el.value.trim(); if (el.dataset.optstr === 'batchModel') { commit({ silent: true }); render(); return; } if (['imageStartTag','imageEndTag'].includes(el.dataset.optstr)) __mod_marker.syncRegex(); commit({ silent: true }); return; }
     if (el.dataset.api) {
         const p = T.apiProfiles().find(x => x.id === T.activeApiId());
         if (p) { p[el.dataset.api] = el.value.trim(); if (el.dataset.api === 'url' || el.dataset.api === 'key') ui.transModels = null; commit({ silent: el.dataset.api !== 'name' && el.dataset.api !== 'model' }); }
@@ -12100,6 +12172,39 @@ function pcDeletedFold(d) {
       ${dl.map(([k, x]) => `<div class="pc-banrow"><b class="mono">${esc(String(x.tag || '').replace(/^artist:/, ''))}</b><span class="pc-dim small pc-grow" style="padding:0 8px">${esc(x.note)}</span><button class="pc-x" data-act="delnoteclear" data-key="${esc(k)}" aria-label="清掉">×</button></div>`).join('')}
       ${dl.length > 1 ? '<button class="pc-pill dashed tiny pc-mt-s" data-act="delnoteclearall">全部清掉</button>' : ''}`);
 }
+// ───── 0.8.80：点数显示
+function pcAnlasHtml() {
+    const s = N.settings();
+    if (s.naiMode !== 'key' && s.naiMode !== 'tavern') return '';
+    void N.anlasRefresh();
+    const a = N.anlasNow();
+    if (!a || (a.anlas == null && !a.error)) return '<span class="pc-dim">查点数中…</span>';
+    if (a.anlas == null) return `<span class="pc-dim">查不到点数：${esc(a.error)}</span>`;
+    const used = a.prev != null && a.prev > a.anlas ? ` <span class="pc-dim">（刚才 −${(a.prev - a.anlas).toLocaleString()}）</span>` : '';
+    const q = (a.quota || []).slice(0, 3).map(([k, v]) => `${esc(k.split('.').slice(-2).join('.'))} ${Number(v).toLocaleString()}`).join(' · ');
+    return `剩 <b>${a.anlas.toLocaleString()}</b> 点 Anlas${used}${q ? ` · <span class="pc-dim">${q}</span>` : ''}`;
+}
+let pcAnlasHooked = false;
+function pcAnlasHook() {
+    if (pcAnlasHooked) return; pcAnlasHooked = true;
+    N.onAnlas(() => { try { for (const el of root?.querySelectorAll('[data-anlas]') || []) el.innerHTML = pcAnlasHtml(); } catch {} });
+}
+function pcAnlasLine(style = '') { pcAnlasHook(); const h = pcAnlasHtml(); return h ? `<div style="${style}"><span data-anlas style="display:inline-block;padding:3px 12px;border-radius:999px;background:#f4efe4;color:#5b4a3c;font-size:12px;line-height:1.5">${h}</span></div>` : ''; }
+function pcBatchModelNow(d) {
+    const s = N.settings();
+    if (!['key', 'site', 'tavern'].includes(s.naiMode)) return '';
+    const m = String(d.options.batchModel || '');
+    return m && N.MODELS.some(x => x[0] === m) ? m : '';
+}
+function pcBatchModelPick(d) {
+    const s = N.settings();
+    if (!['key', 'site', 'tavern'].includes(s.naiMode)) return '';
+    const cur = String(d.options.batchModel || ''), nowName = (N.MODELS.find(x => x[0] === s.novelaimode) || [0, s.novelaimode])[1];
+    const pick = cur || s.novelaimode;
+    return `<label class="pc-label">用哪个模型</label>
+      <select class="pc-input" data-optstr="batchModel"><option value="">跟生图页一样（现在是 ${esc(nowName)}）</option>${N.MODELS.map(([v, n]) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <div class="pc-hint">只管批量，不改生图页的模型。步数、CFG 这些用你上次在那个模型下的设置。${/nai-diffusion-5/.test(pick) ? 'V5 有每周额度，用完会扣 Anlas；Opus 用 4.5 出普通尺寸单张不扣点，想省就选 4.5。' : ''}</div>`;
+}
 function viewBatchResults(d, head) {
     const b = ui.batch, st = b.state;
     const done = st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length;
@@ -12124,6 +12229,7 @@ function viewBatchResults(d, head) {
         <div class="pc-chips" style="margin:0">${st.running ? `<button class="pc-round" data-act="batchpause" aria-label="${st.paused ? '继续' : '暂停'}">${st.paused ? '▶' : '❚❚'}</button><button class="pc-round" data-act="batchstop" aria-label="停止">■</button>` : ''}</div></div>
       <div class="pc-prog"><i style="width:${st.jobs.length ? Math.round(done / st.jobs.length * 100) : 0}%"></i></div>
       <div class="pc-dim small pc-mt-s">画师库里已有的串（不画角色时）出的图会自动存进例图，标着「已存」；别的都只在这里，勾选了再存，或者整包导出。${st.running ? '关掉这一页也会继续生成。' : ''}</div>
+      ${pcAnlasLine('margin:6px 0 0')}
       <div class="pc-actions wrap">${(() => { if (st.running) return ''; const err = st.jobs.filter(j => j.status === 'error').length, rest = st.jobs.filter(j => j.status === 'wait').length; return err + rest ? `<button class="pc-btn dark" data-act="batchretry">${err && rest ? `重画失败的 ${err} 张、接着画剩下的 ${rest} 张` : err ? `重画失败的 ${err} 张` : `接着画剩下的 ${rest} 张`}</button>` : ''; })()}<button class="pc-btn" data-act="batchsetup">${st.running ? '‹ 回到设置，再加一批' : '‹ 回到设置，再来一批'}</button></div>
     </section>
     <div class="pc-seg pc-mt"><button class="${table ? 'on' : ''}" data-act="batchviewmode" data-v="table">对照表</button><button class="${!table ? 'on' : ''}" data-act="batchviewmode" data-v="list">一张张看</button></div>
@@ -12317,6 +12423,7 @@ function startBatch() {
     }
     if (!jobs.length && pcBanSkipped.length) { toastr.warning(`这些画师都拉黑了，没有可画的`, '批量生成例图'); return; }
     if (pcBanSkipped.length) toastr.info(`跳过了 ${pcBanSkipped.length} 串拉黑过的画师`, '批量生成例图');
+    { const pcM = typeof pcBatchModelNow === 'function' ? pcBatchModelNow(d) : ''; for (const j of jobs) j.model = pcM; }
     commit();
     const old = ui.batch.state;
     if (old?.running) {
