@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.74（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.75（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.74';
+globalThis.__PC_VERSION = '0.8.75';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -2466,6 +2466,11 @@ let fileOk = false;
 let lastSave = null, loadInfo = null, observed = null;
 // Merge newly added library entries while keeping explicit deletions across clients.
 const LIBRARY_MAPS = ['artists', 'groups', 'collections', 'characters', 'outfits', 'vibeGroups', 'charRefGroups', 'blacklist', 'bindings', 'chatCast'];
+function pcIdSnap(value) {
+    const out = {};
+    for (const key of LIBRARY_MAPS) out[key] = Object.fromEntries(Object.keys(value?.[key] || {}).map(id => [id, 1]));
+    return out;
+}
 function recordLibraryDeletes(data, before) {
     const deleted = (data.options.libraryDeleted ||= {});
     for (const key of LIBRARY_MAPS) {
@@ -2618,7 +2623,7 @@ async function loadData() {
     data = normalizeData(best ? structuredClone(best[1]) : null);
     if (server && best?.[0] !== 'file') mergeLibraryAdditions(data, server);
     loadedFromServer = true; fileOk = serverOk;
-    observed = structuredClone(data);
+    observed = pcIdSnap(data);
     loadInfo = { at: Date.now(), from: best ? best[0] : 'empty', found: found.map(f => [f[0], savedAt(f[1])]) };
     if (!serverOk) toastr.warning('这个酒馆读不到智库的数据文件，画师库改存在酒馆设置和浏览器里。', '智库', { timeOut: 5000 });
     emit();
@@ -2626,14 +2631,33 @@ async function loadData() {
     return data;
 }
 
-function snapshotData() {
+const PC_LOCAL_MAX = 1500000;
+let pcLocalTimer = null, pcLocalJson = '';
+function pcLocalBackup(json, now = false) {
+    pcLocalJson = json;
+    const write = () => { pcLocalTimer = null; const j = pcLocalJson; pcLocalJson = ''; if (j && j.length < PC_LOCAL_MAX) try { localStorage.setItem(LOCAL_BACKUP, j); } catch {} };
+    if (now || json.length < 300000) { if (pcLocalTimer) { clearTimeout(pcLocalTimer); pcLocalTimer = null; } write(); return; }
+    if (!pcLocalTimer) pcLocalTimer = setTimeout(() => globalThis.requestIdleCallback ? requestIdleCallback(write, { timeout: 4000 }) : write(), 2500);
+}
+function snapshotData(now = false) {
     const json = JSON.stringify(data);
-    // Synchronous local backup happens before waiting for any older network request.
-    try { localStorage.setItem(LOCAL_BACKUP, json); } catch {}
+    // 大存档的 localStorage 备份会同步卡住界面：IndexedDB 一直有一份，localStorage 只在空闲时补
+    pcLocalBackup(json, now);
     void idbSet('data', json);
     if (!fileOk) saveExt(JSON.parse(json));
     return json;
 }
+function pcBase64(str) {
+    if (str.length < 200000 || typeof FileReader === 'undefined' || typeof Blob === 'undefined') return Promise.resolve(utf8ToBase64(str));
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => { const u = String(r.result || ''); resolve(u.slice(u.indexOf(',') + 1)); };
+        r.onerror = () => reject(r.error || new Error('转码失败'));
+        r.readAsDataURL(new Blob([str], { type: 'application/octet-stream' }));
+    });
+}
+// 让出一下主线程，让点按先响应（MessageChannel 比 setTimeout 快，没有就直接继续）
+const pcYield = () => typeof MessageChannel === 'undefined' ? Promise.resolve() : new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); r(); }; c.port2.postMessage(0); });
 async function writeNow(json) {
     if (!loadedFromServer) return;
     if (!fileOk) { saveExt(JSON.parse(snapshotData())); lastSave = { at: Date.now(), ok: true, backup: true }; return; }
@@ -2643,14 +2667,18 @@ async function writeNow(json) {
             const res = await fileRequest(`/user/files/${DATA_FILE}?t=${Date.now()}`, { cache: 'no-store' });
             const remote = res.ok && backupData(res.text);
             if (res.status !== 404 && !remote) throw new Error('保存前读不到数据文件，已保留备份，未覆盖文件');
-            const target = JSON.parse(json), added = mergeLibraryAdditions(target, remote);
-            target.options.savedAt = Math.max(savedAt(target), savedAt(remote) + 1);
+            await pcYield();
+            const target = JSON.parse(json), jsonAt = savedAt(target), added = mergeLibraryAdditions(target, remote);
+            target.options.savedAt = Math.max(jsonAt, savedAt(remote) + 1);
             body = JSON.stringify(target);
-            const before = JSON.stringify(data), visibleAdded = mergeLibraryAdditions(data, remote);
-            if (savedAt(data) <= savedAt(JSON.parse(json))) data.options.savedAt = target.options.savedAt;
-            observed = structuredClone(data); snapshotData();
+            const keysBefore = JSON.stringify(pcIdSnap(data)), visibleAdded = mergeLibraryAdditions(data, remote);
+            if (savedAt(data) <= jsonAt) data.options.savedAt = target.options.savedAt;
+            observed = pcIdSnap(data);
+            const changed = visibleAdded || JSON.stringify(observed) !== keysBefore;
+            await pcYield(); snapshotData();
             if (visibleAdded) toastr.info(`已并入其它设备或页面新增的 ${visibleAdded} 项`, '智库');
-            if (JSON.stringify(data) !== before) emit();
+            if (changed) emit();
+            await pcYield();
             await tryFile(body);
         };
         if (globalThis.navigator?.locks?.request) await navigator.locks.request('zhiku-library-save', save); else await save();
@@ -2658,12 +2686,14 @@ async function writeNow(json) {
     } catch (e) { fileOk = false; saveExt(JSON.parse(snapshotData())); lastSave = { at: Date.now(), ok: false, err: e.message }; throw e; }
 }
 async function tryFile(json) {
-    const res = await fileRequest('/api/files/upload', { method: 'POST', headers: headers(), body: JSON.stringify({ name: DATA_FILE, data: utf8ToBase64(json) }) });
+    const res = await fileRequest('/api/files/upload', { method: 'POST', headers: headers(), body: JSON.stringify({ name: DATA_FILE, data: await pcBase64(json) }) });
     if (!res.ok) throw new Error(`保存失败 HTTP ${res.status}`);
     // A mobile bridge may return HTTP 200 with an HTML page: verify the saved contents.
     const check = await fileRequest(`/user/files/${DATA_FILE}?t=${Date.now()}`, { cache: 'no-store' });
-    const back = check.ok && backupData(check.text);
-    if (!back || JSON.stringify(back) !== json) throw new Error('上传后未读回同一份画师库，已保留其它备份');
+    await pcYield();
+    const same = check.ok && check.text === json;
+    const back = same ? JSON.parse(json) : check.ok && backupData(check.text);
+    if (!back || (!same && JSON.stringify(back) !== json)) throw new Error('上传后未读回同一份画师库，已保留其它备份');
     fileOk = true;
     if (extSettings()?.[EXT_KEY] && savedAt(extSettings()[EXT_KEY]) <= savedAt(back)) saveExt(null);
 }
@@ -2672,7 +2702,7 @@ async function tryFile(json) {
 function commit({ immediate = false, silent = false } = {}) {
     if (!loadedFromServer) return saving;
     data.options = { ...(data.options || {}), savedAt: Math.max(Date.now(), savedAt(data) + 1) };
-    recordLibraryDeletes(data, observed); observed = structuredClone(data);
+    recordLibraryDeletes(data, observed); observed = pcIdSnap(data);
     if (!silent) emit();
     clearTimeout(saveTimer);
     const run = () => {
@@ -2695,7 +2725,7 @@ function replaceData(next) {
     return commit({ immediate: true });
 }
 // Snapshot synchronously on backgrounding; detach listeners when this runtime stops.
-const flushNow = () => { if (saveTimer !== null) commit({ immediate: true, silent: true }); };
+const flushNow = () => { if (saveTimer !== null) commit({ immediate: true, silent: true }); if (pcLocalTimer) pcLocalBackup(pcLocalJson, true); };
 const onHidden = () => { if (document.visibilityState === 'hidden') flushNow(); };
 try { document.addEventListener('visibilitychange', onHidden); window.addEventListener('pagehide', flushNow); } catch {}
 function detach() { try { document.removeEventListener('visibilitychange', onHidden); window.removeEventListener('pagehide', flushNow); } catch {} }
@@ -2769,6 +2799,7 @@ async function diagnoseStorage() {
     const fmt = t => t ? new Date(t).toLocaleString() : '没有时间';
     const cnt = value => { const r = backupData(value); return r ? `画师 ${Object.keys(r.artists).length} · 画师串 ${Object.keys(r.groups).length} · 存于 ${fmt(savedAt(r))}` : '没有有效数据'; };
     const L = [`智库 ${globalThis.__PC_VERSION || ''}`, `【现在用的】${cnt(data)}`, `打开时来源：${{ file: '数据文件', ext: '酒馆设置', idb: 'IndexedDB', local: 'localStorage', empty: '空的' }[loadInfo?.from] || '尚未读取'}`], bad = [];
+    try { const big = Object.entries(data).map(([k, v]) => [k, JSON.stringify(v ?? null).length]).sort((a, b) => b[1] - a[1]); const mb = n => (n / 1048576).toFixed(2) + 'MB'; L.push(`【存档大小】${mb(big.reduce((a, b) => a + b[1], 0))} · 最大的：${big.slice(0, 3).map(([k, n]) => k + ' ' + mb(n)).join('，')}`); } catch {}
     L.push(`文件可写：${fileOk ? '是' : '否（本次只存备份）'} · 上次保存：${lastSave ? lastSave.backup ? '仅备份' : lastSave.ok ? '成功' : '失败：' + lastSave.err : '还没保存'}${saveTimer !== null ? ' · 有改动待保存' : ''}`);
     if (!loadedFromServer) bad.push('存档尚未读取完成');
     try {
@@ -7885,11 +7916,12 @@ function viewBook(d) {
       ${ui.selecting ? '' : '<button class="pc-pill dashed" data-act="nav" data-view="batch">批量生成例图</button><button class="pc-pill dashed" data-act="randstring">随机画师串</button>'}
     </div>
     ${cols.length && !ui.selecting ? '<div class="pc-tip">长按标签可以改名或删除</div>' : ''}
-    ${ui.selecting ? `<div class="pc-selbar"><span>已选 ${ui.picked.size} 个</span><button class="pc-pill dashed tiny" data-act="selall">全选</button><button class="pc-pill dashed tiny" data-act="selempty">选没例图的</button>
+    ${ui.selecting ? `<div class="pc-selbar"><span>已选 ${ui.picked.size} 个</span><button class="pc-pill dashed tiny" data-act="selall">全选</button><button class="pc-pill dashed tiny" data-act="selinvert">反选</button><button class="pc-pill dashed tiny" data-act="selempty">选没例图的</button>
       <button class="pc-pill dashed tiny" data-act="seltag" ${ui.picked.size ? '' : 'disabled'}>加标签</button>
       ${ui.bookTab === 'artists' ? `<button class="pc-pill dashed tiny" data-act="selstring" ${ui.picked.size ? '' : 'disabled'}>组成画师串</button>` : ''}
       ${ui.bookTab === 'artists' ? `<button class="pc-pill dashed tiny danger" data-act="selban" ${ui.picked.size ? '' : 'disabled'}>拉黑</button>` : ''}
-      <button class="pc-pill tiny danger-solid" data-act="seldel" ${ui.picked.size ? '' : 'disabled'}>删除</button></div>` : ''}
+      <button class="pc-pill tiny danger-solid" data-act="seldel" ${ui.picked.size ? '' : 'disabled'}>删除</button>
+      ${ui.bookTab === 'artists' ? `<button class="pc-pill tiny danger" data-act="seldelrest" ${ui.picked.size ? '' : 'disabled'}>只留选中的，删掉没选的</button>` : ''}</div>` : ''}
     ${(() => { const n = Math.max(40, Number(ui.bookShow) || 40), shown = refs.slice(0, n); return (view === 'grid' ? `<div class="pc-grid2 pc-mt-s">${shown.map(r => ticketCard(d, r)).join('') || emptyTxt}</div>`
         : `<div class="pc-mt-s">${shown.map(r => listCard(d, r)).join('') || emptyTxt}</div>`) + (refs.length > n ? `<div class="pc-center pc-mt-s"><button class="pc-pill dashed" id="pc-bookmore" data-act="bookmore">再显示 ${Math.min(40, refs.length - n)} 个 · 共 ${refs.length} 个</button></div>` : (refs.length > 40 ? `<div class="pc-dim small pc-center pc-mt-s">全部 ${refs.length} 个都在这里了</div>` : '')); })()}
 
@@ -10972,7 +11004,23 @@ async function onClick(ev, outside = false) {
                 const on = ui.picked.has(id);
                 root.querySelectorAll('.pc-selbox').forEach(b => { if ((b.dataset.id || b.closest('[data-id]')?.dataset.id) === id) { b.classList.toggle('on', on); b.textContent = on ? '✓' : ''; } });
                 const bar = root.querySelector('.pc-selbar');
-                if (bar) { const t = bar.querySelector('span'); if (t) t.textContent = `已选 ${ui.picked.size} 个`; bar.querySelectorAll('[data-act="seltag"],[data-act="selstring"],[data-act="selban"],[data-act="seldel"]').forEach(x => { x.disabled = !ui.picked.size; }); }
+                if (bar) { const t = bar.querySelector('span'); if (t) t.textContent = `已选 ${ui.picked.size} 个`; bar.querySelectorAll('[data-act="seltag"],[data-act="selstring"],[data-act="selban"],[data-act="seldel"],[data-act="seldelrest"]').forEach(x => { x.disabled = !ui.picked.size; }); }
+                break;
+            }
+            case 'selinvert': { const refs = bookList(d); refs.forEach(r => { if (ui.picked.has(r.id)) ui.picked.delete(r.id); else ui.picked.add(r.id); }); render(); break; }
+            case 'seldelrest': {
+                if (ui.bookTab !== 'artists' || !ui.picked.size) break;
+                const keep = ui.picked.size;
+                const ids = bookList(d).map(r => r.id).filter(id => !ui.picked.has(id) && d.artists[id]);
+                if (!ids.length) { toastr.info('当前列表里没有没选的画师', '智库'); break; }
+                const filtered = !!String(ui.search || '').trim() || (ui.bookFilter || 'all') !== 'all';
+                if (!(await confirmBox(`留下选中的 ${keep} 位，删掉${filtered ? '当前筛选出来的' : ''}其余 ${ids.length} 位画师？他们的例图会一起删掉，也会从所有画师组里移出。`, { ok: `删掉 ${ids.length} 位`, cancel: '算了' }))) break;
+                const imgs = ids.flatMap(id => (d.artists[id].images || []).map(i => i.path));
+                for (const id of ids) M.deleteArtist(d, id);
+                ui.picked.clear(); ui.selecting = false;
+                commit();
+                imgs.forEach(p => deleteImageFile(p));
+                toastr.success(`删掉了 ${ids.length} 位，留下 ${keep} 位`, '智库');
                 break;
             }
             case 'selall': { const refs = bookList(d); if (ui.picked.size === refs.length) ui.picked.clear(); else refs.forEach(r => ui.picked.add(r.id)); render(); break; }
