@@ -13,7 +13,7 @@ export function applyChibiCharsCompatibility(s) {
 function chibiChars(opts) {
     if (getData().options?.frameKeep) return;
     if (!CHIBI_WORD.test(', ' + (opts.positive || ''))) return;
-    if (opts.chars?.length) opts.chars = opts.chars.map(c => CHIBI_WORD.test(', ' + (c.prompt || '')) ? c : { ...c, prompt: ['chibi', c.prompt].filter(Boolean).join(', ') });
+    if (opts.chars?.length) opts.chars = opts.chars.map(c => CHIBI_WORD.test(', ' + (c.prompt || '')) ? c : { ...c, prompt: ['1.5::chibi, super deformed::', c.prompt].filter(Boolean).join(', ') });
     if (!/\\bchibi inset\\b/i.test(opts.negative || '')) opts.negative = [opts.negative, 'chibi inset'].filter(Boolean).join(', ');
 }
 

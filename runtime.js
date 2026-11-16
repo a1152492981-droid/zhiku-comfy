@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.71（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.72（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.71';
+globalThis.__PC_VERSION = '0.8.72';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -4125,7 +4125,7 @@ const CHIBI_WORD = /(?:^|[\s,:(])(?:artist:\s*)?(?:chibi|super[ _]deformed)(?=$|
 function chibiChars(opts) {
     if (getData().options?.frameKeep) return;
     if (!CHIBI_WORD.test(', ' + (opts.positive || ''))) return;
-    if (opts.chars?.length) opts.chars = opts.chars.map(c => CHIBI_WORD.test(', ' + (c.prompt || '')) ? c : { ...c, prompt: ['chibi', c.prompt].filter(Boolean).join(', ') });
+    if (opts.chars?.length) opts.chars = opts.chars.map(c => CHIBI_WORD.test(', ' + (c.prompt || '')) ? c : { ...c, prompt: ['1.5::chibi, super deformed::', c.prompt].filter(Boolean).join(', ') });
     if (!/\bchibi inset\b/i.test(opts.negative || '')) opts.negative = [opts.negative, 'chibi inset'].filter(Boolean).join(', ');
 }
 
@@ -5786,6 +5786,7 @@ function frameTrim(text, frame) {
 }
 const frameName = f => !f ? '' : [f.shot ? FRAME_NAME[f.shot] : '', f.chibi ? '画QQ人' : ''].filter(Boolean).join('、');
 const CHIBI_NEG = 'chibi inset, multiple views, realistic proportions';
+const CHIBI_CHAR = '1.5::chibi, super deformed::';
 
 function buildChatPrompt(scene, picks, { nsfw = hasNsfwRating(scene) } = {}) {
     const d = getData();
@@ -5803,7 +5804,7 @@ function buildChatPrompt(scene, picks, { nsfw = hasNsfwRating(scene) } = {}) {
     const { positive, negative } = E.composeStudio({ pos: base, neg: chatNeg });
     return {
         positive, negative,
-        chars: picks.map(p => ({ prompt: soloize([frame && frame.chibi ? 'chibi' : '', fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')), uc: [p.char.negative, p.uc].filter(Boolean).join(', '), center: { x: snap(p.x), y: snap(p.y) } })),
+        chars: picks.map(p => ({ prompt: soloize([frame && frame.chibi ? CHIBI_CHAR : '', fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')), uc: [p.char.negative, p.uc].filter(Boolean).join(', '), center: { x: snap(p.x), y: snap(p.y) } })),
     };
 }
 
@@ -6131,7 +6132,7 @@ function studioCastPrompt({ pos = '', neg = '', scene = '' }, cast) {
         return { framing, ...E.composeStudio({ pos: M.mergeTags(pos, lead, ...picks.map(p => [p.look, p.act].filter(Boolean).join(', ')), scene, ...picks.map(p => p.fit)), neg: negAll, scene: '' }), chars: [], picks };
     }
     const r = E.composeStudio({ pos: M.mergeTags(hasCount ? '' : countTags(chars), pos), neg, scene });
-    return { framing, ...r, chars: picks.map(p => ({ prompt: soloize(frame && frame.chibi ? M.mergeTags('chibi', p.tags) : p.tags), uc: p.char.negative || '', center: { x: p.x, y: 0.5 } })), picks };
+    return { framing, ...r, chars: picks.map(p => ({ prompt: soloize(frame && frame.chibi ? [CHIBI_CHAR, p.tags].filter(Boolean).join(', ') : p.tags), uc: p.char.negative || '', center: { x: p.x, y: 0.5 } })), picks };
 }
 /** 入画角色绑的长相参考组 */
 function studioCastRefs(picks) {

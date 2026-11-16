@@ -16,5 +16,10 @@ export function applyChibiPreviewCompatibility(s) {
     // 聊天：分人物
     patch(`        chars: picks.map(p => ({ prompt: soloize([fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')),`,
         `        chars: picks.map(p => ({ prompt: soloize([frame && frame.chibi ? 'chibi' : '', fixedTags(p.char, { nsfw }), p.tags].filter(Boolean).join(', ')),`);
+    // 0.8.72：每个角色的 chibi 加重：1.5::chibi, super deformed::，放在角色词最前面
+    patch(`prompt: soloize(frame && frame.chibi ? M.mergeTags('chibi', p.tags) : p.tags)`, `prompt: soloize(frame && frame.chibi ? [CHIBI_CHAR, p.tags].filter(Boolean).join(', ') : p.tags)`);
+    patch(`prompt: soloize([frame && frame.chibi ? 'chibi' : '', fixedTags(p.char, { nsfw }), p.tags]`, `prompt: soloize([frame && frame.chibi ? CHIBI_CHAR : '', fixedTags(p.char, { nsfw }), p.tags]`);
+    patch(`const CHIBI_NEG = 'chibi inset, multiple views, realistic proportions';`, `const CHIBI_NEG = 'chibi inset, multiple views, realistic proportions';
+const CHIBI_CHAR = '1.5::chibi, super deformed::';`);
     return s;
 }
