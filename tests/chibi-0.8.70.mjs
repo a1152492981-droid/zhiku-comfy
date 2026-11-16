@@ -12,5 +12,5 @@ p={positive:'1girl, artist:chibi',negative:'',chars:[{prompt:'1girl'}]};chibi(p)
 p={positive:'chibified armor',negative:'',chars:[{prompt:'1girl'}]};chibi(p);assert.equal(p.chars[0].prompt,'1girl');
 data.options.frameKeep=true;p={positive:'chibi',negative:'',chars:[{prompt:'1girl'}]};chibi(p);assert.equal(p.chars[0].prompt,'1girl');assert.equal(p.negative,'');
 const scenes=vm.runInNewContext(s.slice(s.indexOf('const BUILTIN_SCENES ='),s.indexOf('const BUILTIN_GROUPS ='))+';BUILTIN_SCENES');
-assert.equal(scenes.length,118);assert(scenes.every(x=>!/(?:^|,)\s*\d+others?\b/i.test(x.scene)));
-console.log('PASS: character chibi and inset at generation, opt-out, existing tag, 118 builtins without conflicting others count');
+assert.equal(scenes.length,127);assert(scenes.every(x=>!/(?:^|,)\s*\d+others?\b/i.test(x.scene)));
+console.log('PASS: character chibi and inset at generation, opt-out, existing tag, 127 builtins without conflicting others count');
