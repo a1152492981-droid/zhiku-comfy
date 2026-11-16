@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.77（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.78（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.77';
+globalThis.__PC_VERSION = '0.8.78';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -7693,7 +7693,7 @@ function viewStudio(d) {
       <div class="pc-row-between" style="margin-top:10px"><span class="pc-label" style="margin:0">正面提示词</span><span class="pc-chips" style="margin:0;flex-wrap:wrap;justify-content:flex-end"><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.img2pBusy ? '<span class="pc-busy">看图中</span>' : '看图写提示词'}<input type="file" accept="image/*" data-img2prompt hidden ${ui.img2pBusy ? 'disabled' : ''}></label><button class="pc-pill dashed tiny" data-act="ideapose" ${ui.ideaBusy ? 'disabled' : ''}>${ui.ideaBusy ? '<span class="pc-busy">构思中</span>' : '✦ 灵感写姿势'}</button><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.poseBusy ? '<span class="pc-busy">读姿势中</span>' : '看图读姿势构图'}<input type="file" accept="image/*" data-imgpose hidden ${ui.poseBusy ? 'disabled' : ''}></label></span></div>
       <div class="pc-artline">
         ${(() => { const cv = owner && M.ticketCover(d, owner); return cv ? `<img class="pc-artcover" src="${esc(imgUrl(cv))}" alt="看例图" data-act="viewticket" data-type="${owner.type}" data-id="${esc(owner.id)}">` : seal(); })()}
-        <div class="pc-grow"><b ${owner?.type === 'group' ? 'data-act="studiorename" style="cursor:pointer" title="点一下改名"' : ''}>${owner ? esc(M.ticketName(d, owner)) : (st.pos.trim() ? '这串还没存进画师库' : '还没写')}${owner?.type === 'group' ? ' <span class="pc-dim" style="font-weight:400;font-size:12px">✎ 改名</span>' : ''}</b><small>${[nArtists ? nArtists + ' 位画师' : '没有 artist: 画师', nOther ? nOther + ' 个别的词' : ''].filter(Boolean).join(' · ')}${owner && M.ticketCover(d, owner) ? ' · 点图看大图' : ''}</small></div>
+        <div class="pc-grow"><b ${owner?.type === 'group' ? 'data-act="studiorename" style="cursor:pointer" title="点一下改名"' : ''}>${owner ? esc(M.ticketName(d, owner)) : (st.pos.trim() ? '这串还没存进画师库' : '还没写')}${owner?.type === 'group' ? ' <span class="pc-dim" style="font-weight:400;font-size:12px">✎ 改名</span>' : ''}</b><small>${[nArtists ? nArtists + ' 位画师' : '没有 artist: 画师', nOther ? nOther + ' 个别的词' : ''].filter(Boolean).join(' · ')}${owner && M.ticketCover(d, owner) ? ' · 点图看大图' : ''}</small>${(() => { const it = owner && M.resolveTicket(d, owner)?.item; if (!it) return ''; return it.note ? `<div class="pc-studionote" data-act="studionote" style="margin-top:6px;font-size:13px;line-height:1.5;padding:5px 9px;border-radius:8px;background:rgba(120,90,60,.1);cursor:pointer;white-space:pre-wrap;word-break:break-word">${esc(it.note)} <span class="pc-dim">✎</span></div>` : '<button class="pc-pill dashed tiny" style="margin-top:6px" data-act="studionote">＋ 写备注</button>'; })()}</div>
         <button class="pc-pill dashed" data-act="pickartist">换画师</button>
       </div>
       ${(() => { const bare = guessBareArtists(d, st.pos); return bare.length ? `<div class="pc-bare" style="margin-top:8px"><div class="pc-row-between"><span class="pc-dim small">没写 artist: 的画师名 · 点名字单个补</span><button class="pc-pill tiny on" data-act="addprefix">全部补上</button></div><div class="pc-chips wrap">${bare.map(n => `<button class="pc-pill dashed tiny" data-act="addprefix" data-name="${esc(n)}">${esc(n)}</button>`).join('')}</div></div>` : ''; })()}
@@ -10402,6 +10402,16 @@ async function onClick(ev, outside = false) {
             }
             case 'saveartist': await saveStudioTicket(); break;
             case 'unhidechars': { const h = getData().options.hiddenChars || {}; for (const k of Object.keys(h)) if (k.startsWith(el.dataset.v || '')) delete h[k]; commit(); render(); break; }
+            case 'studionote': {
+                const ref = M.resolveTicket(getData(), ui.studio.sourceRef) ? ui.studio.sourceRef : null;
+                const it = ref && M.resolveTicket(getData(), ref).item;
+                if (!it) break;
+                const n = await promptText(`给「${M.ticketName(getData(), ref)}」写备注`, it.note || '', true);
+                if (n == null || n === (it.note || '')) break;
+                it.note = n;
+                await __mod_store.commit({ immediate: true, silent: true });
+                render(); break;
+            }
             case 'studiorename': {
                 const ref = studioSource(), g = ref && getData().groups[ref.id];
                 if (!g) break;
@@ -10515,8 +10525,10 @@ async function onClick(ev, outside = false) {
             case 'delete': {
                 const r = refFrom(el);
                 const name = M.ticketName(d, r);
-                if (!(await confirmBox(r.type === 'group' ? `删除画师组「${name}」？组里的画师和他们的例图不会被删。` : `删除画师「${name}」？他的例图会一起删掉，也会从所有画师组里移出。`))) break;
+                const delNote = r.type === 'group' ? ((await confirmBox(`删除画师组「${name}」？组里的画师和他们的例图不会被删。`)) ? '' : null) : await pcDelNoteBox(`删除画师「${name}」？他的例图会一起删掉，也会从所有画师组里移出。`);
+                if (delNote == null) break;
                 const t = M.resolveTicket(d, r);
+                if (r.type === 'artist') pcRecordDeleted(d, [t.item.tag], delNote);
                 const imgs = t.item.images.slice();
                 if (r.type === 'group') M.deleteGroup(d, r.id); else M.deleteArtist(d, r.id);
                 if (M.sameRef(ui.studio.sourceRef, r)) { ui.studio.sourceRef = null; saveStudio(); }
@@ -10990,6 +11002,32 @@ async function onClick(ev, outside = false) {
             case 'batchchar': { const s = new Set(ui.batch.chars || []); const k = el.dataset.v; if (s.has(k)) s.delete(k); else s.add(k); ui.batch.chars = [...s]; render(); break; }
             case 'batchuseref': ui.batch.useRef = el.dataset.v === '1'; render(); break;
             case 'batchviewmode': ui.batch.view = el.dataset.v; render(); break;
+            case 'batchnote': {
+                const key = el.dataset.k, st = ui.batch.state;
+                if (!st) break;
+                const ref = pcBatchRowRef(d, key), it = ref && M.resolveTicket(d, ref)?.item;
+                const job = st.jobs.find(o => batchRowKey(o) === key);
+                const name = it ? M.ticketName(d, ref) : batchRowName(d, job || { text: key.replace(/^t:/, '') });
+                const n = await promptText(`给「${name}」写备注`, it ? it.note || '' : st.rowNotes?.[key] || '', true);
+                if (n == null) break;
+                if (it) { it.note = n; commit({ silent: true }); }
+                else { (st.rowNotes ||= {})[key] = n; }
+                render(); break;
+            }
+            case 'batchban': {
+                const key = el.dataset.k, st = ui.batch.state;
+                const job = st?.jobs.find(o => batchRowKey(o) === key);
+                const tag = pcBatchRowTag(d, key, job?.text);
+                if (!tag) break;
+                const note = await promptText(`拉黑「${tag.replace(/^artist:/, '')}」——理由（可不填）`, '');
+                if (note == null) break;
+                M.setBan(d, tag, note.trim());
+                let skipped = 0;
+                for (const o of st.jobs) if (o.status === 'wait' && M.bannedIn(d, o.ref && M.resolveTicket(d, o.ref) ? M.ticketString(d, o.ref) : o.text).length) { o.status = 'skip'; o.error = '拉黑了'; skipped++; }
+                commit();
+                toastr.info(`拉黑了${skipped ? `，还没出的 ${skipped} 张不画了` : ''}`, '智库', { timeOut: 1800 });
+                render(); break;
+            }
             case 'batchsave': try { await batchSavePicked(d); } catch (e) { toastr.error(e.message, '存进画师库'); } render(); break;
             case 'batchtochar': try { await batchToChar(d); } catch (e) { toastr.error(e.message, '存进角色相册'); } render(); break;
             case 'batchexport': try { await batchExport(d); } catch (e) { toastr.error(e.message, '导出'); } break;
@@ -11034,7 +11072,9 @@ async function onClick(ev, outside = false) {
                 const ids = bookList(d).map(r => r.id).filter(id => !ui.picked.has(id) && d.artists[id]);
                 if (!ids.length) { toastr.info('当前列表里没有没选的画师', '智库'); break; }
                 const filtered = !!String(ui.search || '').trim() || (ui.bookFilter || 'all') !== 'all';
-                if (!(await confirmBox(`留下选中的 ${keep} 位，删掉${filtered ? '当前筛选出来的' : ''}其余 ${ids.length} 位画师？他们的例图会一起删掉，也会从所有画师组里移出。`, { ok: `删掉 ${ids.length} 位`, cancel: '算了' }))) break;
+                const delNote = await pcDelNoteBox(`留下选中的 ${keep} 位，删掉${filtered ? '当前筛选出来的' : ''}其余 ${ids.length} 位画师？他们的例图会一起删掉，也会从所有画师组里移出。`, `删掉 ${ids.length} 位`);
+                if (delNote == null) break;
+                pcRecordDeleted(d, ids.map(id => d.artists[id]?.tag), delNote);
                 const imgs = ids.flatMap(id => (d.artists[id].images || []).map(i => i.path));
                 for (const id of ids) M.deleteArtist(d, id);
                 ui.picked.clear(); ui.selecting = false;
@@ -11050,7 +11090,9 @@ async function onClick(ev, outside = false) {
                 const type = ui.bookTab === 'groups' ? 'group' : 'artist';
                 const ids = [...ui.picked].filter(id => itemOf(d, { type, id }));
                 if (!ids.length) break;
-                if (!(await confirmBox(type === 'group' ? `删除选中的 ${ids.length} 个画师组？组里的画师不会被删。` : `删除选中的 ${ids.length} 位画师？他们的例图会一起删掉，也会从所有画师组里移出。`, { ok: '删除', cancel: '算了' }))) break;
+                const delNote = type === 'group' ? ((await confirmBox(`删除选中的 ${ids.length} 个画师组？组里的画师不会被删。`, { ok: '删除', cancel: '算了' })) ? '' : null) : await pcDelNoteBox(`删除选中的 ${ids.length} 位画师？他们的例图会一起删掉，也会从所有画师组里移出。`);
+                if (delNote == null) break;
+                if (type === 'artist') pcRecordDeleted(d, ids.map(id => d.artists[id]?.tag), delNote);
                 const imgs = ids.flatMap(id => itemOf(d, { type, id }).images.map(i => i.path));
                 for (const id of ids) { if (type === 'group') M.deleteGroup(d, id); else M.deleteArtist(d, id); }
                 ui.picked.clear(); ui.selecting = false;
@@ -11062,7 +11104,7 @@ async function onClick(ev, outside = false) {
             case 'selban': {
                 const ids = [...ui.picked].filter(id => d.artists[id]);
                 if (!ids.length) break;
-                const note = await promptText(`拉黑选中的 ${ids.length} 位画师——备注（可不填）`, '');
+                const note = await promptText(`拉黑选中的 ${ids.length} 位画师——理由（可不填）`, '');
                 if (note == null) break;
                 for (const id of ids) M.setBan(d, d.artists[id].tag, note.trim());
                 ui.picked.clear(); ui.selecting = false; commit();
@@ -11833,6 +11875,26 @@ function batchLayout(d, jobs) {
     const cell = new Map(jobs.map((j, i) => [rIdx.get(batchRowKey(j)) + ':' + cIdx.get(batchColKey(j)), i]));
     return { rows, cols, cell };
 }
+function pcBatchRowRef(d, key) {
+    const j = (ui.batch.state?.jobs || []).find(o => batchRowKey(o) === key && o.ref && M.resolveTicket(d, o.ref));
+    return j ? j.ref : null;
+}
+function pcBatchRowTag(d, key, text) {
+    const ref = pcBatchRowRef(d, key);
+    if (ref?.type === 'artist') return d.artists[ref.id]?.tag || '';
+    const p = M.parseArtistString(ref ? M.ticketString(d, ref) : text || '');
+    return p.members.length === 1 ? p.members[0].tag : '';
+}
+function pcBatchRowExtra(d, r, mini = false) {
+    const ref = pcBatchRowRef(d, r.key), it = ref && M.resolveTicket(d, ref)?.item;
+    const note = it ? it.note || '' : ui.batch.state?.rowNotes?.[r.key] || '';
+    const tag = pcBatchRowTag(d, r.key, r.text), ban = tag && M.banInfo(d, tag), del = !it && tag && pcDeletedNote(d, tag);
+    const k = esc(r.key);
+    if (mini) return `<button class="pc-bnote mini" data-act="batchnote" data-k="${k}" title="写备注">✎</button>`;
+    return `${ban ? `<em class="pc-bban">已拉黑${ban.note ? '：' + esc(ban.note) : ''}</em>` : ''}${del ? `<em class="pc-bdel">删过：${esc(del.note)}</em>` : ''}
+      ${note ? `<button class="pc-bnote" data-act="batchnote" data-k="${k}">${esc(note)} ✎</button>` : `<button class="pc-bnote add" data-act="batchnote" data-k="${k}">＋ 备注</button>`}
+      ${tag && !ban ? `<button class="pc-bnote ban" data-act="batchban" data-k="${k}">拉黑</button>` : ''}`;
+}
 function viewBatchResults(d, head) {
     const b = ui.batch, st = b.state;
     const done = st.jobs.filter(j => ['done', 'error', 'skip'].includes(j.status)).length;
@@ -11841,17 +11903,17 @@ function viewBatchResults(d, head) {
     const table = (b.view || 'table') === 'table';
     const shotOf = j => d.templates[j.templateId]?.shot || 'bust';
     const cellHtml = (j, i) => `<div class="pc-bcell shot-${shotOf(j)} ${j.picked ? 'on' : ''} ${j.status}" ${j.status === 'done' ? `data-act="batchpick" data-i="${i}"` : ''} title="${esc(j.error)}">
-        ${j.image ? `<img src="${esc(j.image)}" alt="">` : `<span>${{ wait: '排队', run: '<span class="pc-busy">生成中</span>', error: '失败', skip: '已有，跳过' }[j.status] || ''}</span>`}
+        ${j.image ? `<img src="${esc(j.image)}" alt="">` : `<span>${{ wait: '排队', run: '<span class="pc-busy">生成中</span>', error: '失败', skip: j.error === '拉黑了' ? '拉黑了，不画' : '已有，跳过' }[j.status] || ''}</span>`}
         ${j.status === 'done' ? `<i class="pc-bpick">${j.picked ? '✓' : ''}</i>` : ''}
-        ${table ? '' : `<b class="mono">${esc(batchRowName(d, j))} · ${esc(batchColName(d, j, true))}</b>`}${j.saved ? '<u class="pc-bsaved">已存</u>' : ''}</div>`;
+        ${table ? '' : `<b class="mono">${esc(batchRowName(d, j))} · ${esc(batchColName(d, j, true))}${pcBatchRowExtra(d, { key: batchRowKey(j), text: j.text }, true)}</b>`}${j.saved ? '<u class="pc-bsaved">已存</u>' : ''}</div>`;
     let body;
     if (table) {
         const { rows, cols, cell } = batchLayout(d, st.jobs);
         body = `<div class="pc-btable" style="grid-template-columns:72px repeat(${cols.length},minmax(84px,1fr))"><span></span>${cols.map(c => `<span class="pc-bth">${esc(c.name)}</span>`).join('')}
-          ${rows.map((r, ri) => `<span class="pc-btr" title="${esc(r.text)}">${esc(r.name)}${r.inLib ? '' : '<em>不在库里</em>'}</span>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); return i === undefined ? '<span></span>' : cellHtml(st.jobs[i], i); }).join('')}`).join('')}</div>`;
+          ${rows.map((r, ri) => `<span class="pc-btr" title="${esc(r.text)}">${esc(r.name)}${r.inLib ? '' : '<em>不在库里</em>'}${pcBatchRowExtra(d, r)}</span>${cols.map((c, ci) => { const i = cell.get(ri + ':' + ci); return i === undefined ? '<span></span>' : cellHtml(st.jobs[i], i); }).join('')}`).join('')}</div>`;
     } else body = `<div class="pc-grid2 pc-bgrid">${st.jobs.map(cellHtml).join('')}</div>`;
     const any = st.jobs.some(j => j.status === 'done');
-    return `${head}<style>.pc-btable{display:grid;gap:6px;overflow-x:auto;align-items:start;scrollbar-width:none}.pc-btable::-webkit-scrollbar{display:none}.pc-bth{font-size:12px;text-align:center;opacity:.75;align-self:end;line-height:1.3}.pc-btr{font-size:12px;line-height:1.35;align-self:center;word-break:break-all}.pc-btr em{display:block;font-style:normal;font-size:10.5px;opacity:.6}.pc-btable .pc-bcell b{display:none}.pc-bsaved{position:absolute;left:5px;bottom:5px;text-decoration:none;font-size:10.5px;padding:0 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff}.pc-bcell{position:relative}</style>
+    return `${head}<style>.pc-studionote{margin-top:6px;font-size:13px;line-height:1.5;padding:5px 9px;border-radius:8px;background:rgba(120,90,60,.1);cursor:pointer;white-space:pre-wrap;word-break:break-word}.pc-bnote{display:block;margin-top:4px;max-width:100%;text-align:left;font:inherit;font-size:11px;line-height:1.35;padding:2px 6px;border-radius:7px;border:0;background:#efe6d6;color:#3a2e26;cursor:pointer;word-break:break-all}.pc-bnote.add,.pc-bnote.ban{display:inline-block;background:#f4efe4;border:1.5px dashed var(--pc-dash);border-radius:999px;margin-right:4px}.pc-bnote.ban{color:#a2593f}.pc-bnote.mini{display:inline;margin:0 0 0 4px;padding:0 4px;background:transparent}.pc-btr .pc-bban,.pc-btr .pc-bdel{display:block;font-style:normal;color:#9b4f45;background:#f4efe4;border-radius:7px;padding:2px 6px;font-size:11px;margin-top:4px;opacity:1}.pc-btable{display:grid;gap:6px;overflow-x:auto;align-items:start;scrollbar-width:none}.pc-btable::-webkit-scrollbar{display:none}.pc-bth{font-size:12px;text-align:center;opacity:.75;align-self:end;line-height:1.3}.pc-btr{font-size:12px;line-height:1.35;align-self:center;word-break:break-all}.pc-btr em{display:block;font-style:normal;font-size:10.5px;opacity:.6}.pc-btable .pc-bcell b{display:none}.pc-bsaved{position:absolute;left:5px;bottom:5px;text-decoration:none;font-size:10.5px;padding:0 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff}.pc-bcell{position:relative}</style>
     <section class="pc-card pc-pad pc-mt">
       <div class="pc-row-between"><b>${done} / ${st.jobs.length} 张</b>
         <div class="pc-chips" style="margin:0">${st.running ? `<button class="pc-round" data-act="batchpause" aria-label="${st.paused ? '继续' : '暂停'}">${st.paused ? '▶' : '❚❚'}</button><button class="pc-round" data-act="batchstop" aria-label="停止">■</button>` : ''}</div></div>
@@ -11883,6 +11945,7 @@ async function batchSavePicked(d) {
                 || (single ? { type: 'artist', id: M.ensureArtist(d, p.members[0].tag).id } : M.createFromString(d, { name: j.name || '', text: j.text, note: '批量生成时存的' }));
             if (!ref) continue;
             made++;
+            { const rn = ui.batch.state.rowNotes?.['t:' + j.text], it = M.resolveTicket(d, ref)?.item; if (rn && it && !it.note) it.note = rn; if (it && it.note === '批量生成时存的' && rn) it.note = rn; }
             for (const o of ui.batch.state.jobs) if (batchRowKey(o) === 't:' + j.text) o.ref = ref;
         }
         const tpl = d.templates[j.templateId];
@@ -12025,7 +12088,9 @@ function batchBanWarn(d, text) {
 function startBatch() {
     const d = getData();
     const list = batchUnits(d, ui.batch.text);
-    if (!list.length) { toastr.warning('先粘贴几位画师或画师串', '批量生成例图'); return; }
+    const pcBanLines = M.parseBatchLines(ui.batch.text).length - list.length;
+    if (!list.length) { toastr.warning(pcBanLines ? `粘贴的 ${pcBanLines} 串里都有拉黑过的画师，没有可画的` : '先粘贴几位画师或画师串', '批量生成例图'); return; }
+    if (pcBanLines) toastr.info(`跳过了 ${pcBanLines} 串拉黑过的画师`, '批量生成例图');
     if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '批量生成例图'); return; }
     const tpls = chosenTemplates('batch');
     if (!tpls.length) { toastr.warning('这条固定提示词已删除或还没有有效英文标签，请在生图页转换并重新保存后再选', '批量生成例图'); return; }
@@ -12033,16 +12098,20 @@ function startBatch() {
     // 画谁：选了角色就每串 × 每个角色；没在画师库里的串不自动建，看中了勾选再存
     const who = ui.batch.who === 'chars' ? (ui.batch.chars || []).map(k => C.getChar(k)).filter(c => c && c.appearance?.length) : [];
     if (ui.batch.who === 'chars' && !who.length) { toastr.warning('选几个写了外貌的角色，或者改回「模板里的人」', '批量生成例图'); return; }
+    const pcBanSkipped = [];
     for (const u of list) {
         const ref = findUnit(d, u);
         const text = u.text || (Math.abs((u.weight ?? 1) - 1) < 0.001 ? u.tag : `${u.weight}::${u.tag}::`);
         const item = ref && M.resolveTicket(d, ref)?.item;
+        if (M.bannedIn(d, item ? M.ticketString(d, ref) : text).length) { pcBanSkipped.push(u.name || text); continue; }
         for (const t of tpls) {
             const tpl = d.templates[t];
             if (who.length) for (const c of who) jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, char: c.key, charName: c.name, charTags: C.fixedTags(c, { nsfw: !!tpl?.nsfw }), charNeg: c.negative || '', charRef: ui.batch.useRef !== false && c.charRef && d.charRefGroups?.[c.charRef] ? c.charRef : '' });
             else jobs.push({ ref, text, name: u.name || '', templateId: t, soloWeight: Number(d.options.sampleSoloWeight) || 1, save: d.options.batchSaveLib !== false, char: '', skip: !!(ui.batch.skipExisting && item?.images.some(i => i.template === t)) });
         }
     }
+    if (!jobs.length && pcBanSkipped.length) { toastr.warning(`这些画师都拉黑了，没有可画的`, '批量生成例图'); return; }
+    if (pcBanSkipped.length) toastr.info(`跳过了 ${pcBanSkipped.length} 串拉黑过的画师`, '批量生成例图');
     commit();
     const old = ui.batch.state;
     if (old?.running) {
@@ -13059,6 +13128,24 @@ function modal(inner) {
     setTimeout(() => { if (back.isConnected && DOC.querySelectorAll('.pc-modal-backdrop')[DOC.querySelectorAll('.pc-modal-backdrop').length - 1] === back) box.querySelector('textarea, input')?.focus({preventScroll:true}); }, 30);
     return box;
 }
+function pcDelNoteBox(msg, okText = '删除') {
+    return new Promise(resolve => {
+        const box = modal(`<h3 class="pc-h3">${esc(msg)}</h3>
+          <label class="pc-label" style="margin-top:8px">为什么删（可不填）</label>
+          <input class="pc-input" data-v placeholder="比如：脸崩、太油、和别的串撞了">
+          <div class="pc-dim small" style="margin-top:4px">写了的话，以后批量里再出现这位画师会提示「删过：理由」。</div>
+          <div class="pc-actions"><button class="pc-btn" data-m="no">算了</button><button class="pc-btn dark" data-m="ok">${esc(okText)}</button></div>`);
+        const done = v => { box.closeModal(); resolve(v); };
+        box.addEventListener('click', ev => { const m = ev.target.closest('[data-m]')?.dataset.m; if (m === 'ok') done(box.querySelector('[data-v]').value.trim()); if (m === 'no') done(null); });
+        box.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229) done(box.querySelector('[data-v]').value.trim()); });
+    });
+}
+function pcRecordDeleted(d, tags, note) {
+    if (!note) return;
+    const m = (d.options.deletedNotes ||= {});
+    for (const t of tags) if (t) m[M.artistKey(M.normalizeArtistTag(t))] = { tag: M.normalizeArtistTag(t), note, at: Date.now() };
+}
+function pcDeletedNote(d, tag) { return d.options?.deletedNotes?.[M.artistKey(M.normalizeArtistTag(tag))] || null; }
 function promptText(title, value = '', multiline = false) {
     return new Promise(resolve => {
         const box = modal(`<h3 class="pc-h3">${esc(title)}</h3>
