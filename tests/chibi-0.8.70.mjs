@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const s = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8');
+const start=s.indexOf('const CHIBI_WORD ='), end=s.indexOf('async function run(opts)',start);
+assert(start>=0&&end>start);
+const data={options:{frameKeep:false}};
+const chibi=vm.runInNewContext(s.slice(start,end)+';chibiChars',{getData:()=>data});
+let p={positive:'2boys, chibi, sitting together',negative:'blurry',chars:[{prompt:'1boy, black hair'},{prompt:'1boy, super deformed, red hair'}]};
+chibi(p);assert.equal(p.chars[0].prompt,'chibi, 1boy, black hair');assert.equal(p.chars[1].prompt,'1boy, super deformed, red hair');assert.equal(p.negative,'blurry, chibi inset');chibi(p);assert.equal(p.negative,'blurry, chibi inset');
+p={positive:'1girl, artist:chibi',negative:'',chars:[{prompt:'1girl'}]};chibi(p);assert.equal(p.chars[0].prompt,'chibi, 1girl');assert.equal(p.negative,'chibi inset');
+p={positive:'chibified armor',negative:'',chars:[{prompt:'1girl'}]};chibi(p);assert.equal(p.chars[0].prompt,'1girl');
+data.options.frameKeep=true;p={positive:'chibi',negative:'',chars:[{prompt:'1girl'}]};chibi(p);assert.equal(p.chars[0].prompt,'1girl');assert.equal(p.negative,'');
+const scenes=vm.runInNewContext(s.slice(s.indexOf('const BUILTIN_SCENES ='),s.indexOf('const BUILTIN_GROUPS ='))+';BUILTIN_SCENES');
+assert.equal(scenes.length,118);assert(scenes.every(x=>!/(?:^|,)\s*\d+others?\b/i.test(x.scene)));
+console.log('PASS: character chibi and inset at generation, opt-out, existing tag, 118 builtins without conflicting others count');

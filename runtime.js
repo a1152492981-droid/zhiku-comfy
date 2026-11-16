@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.69（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.70（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.69';
+globalThis.__PC_VERSION = '0.8.70';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -4121,6 +4121,14 @@ async function charRefs(groupIds) {
     return out.length ? out : null;
 }
 
+const CHIBI_WORD = /(?:^|[\s,:(])(?:artist:\s*)?(?:chibi|super[ _]deformed)(?=$|[\s,:)])/i;
+function chibiChars(opts) {
+    if (getData().options?.frameKeep) return;
+    if (!CHIBI_WORD.test(', ' + (opts.positive || ''))) return;
+    if (opts.chars?.length) opts.chars = opts.chars.map(c => CHIBI_WORD.test(', ' + (c.prompt || '')) ? c : { ...c, prompt: ['chibi', c.prompt].filter(Boolean).join(', ') });
+    if (!/\bchibi inset\b/i.test(opts.negative || '')) opts.negative = [opts.negative, 'chibi inset'].filter(Boolean).join(', ');
+}
+
 async function run(opts) {
     if (opts.backend === 'comfy') { if (!N.comfyReady()) throw new Error('还没连上 ComfyUI，到智库「Comfy」页看看'); opts.noVibe = true; opts.director = null; }
     else if (!N.isReady()) throw new Error('还没填 NovelAI key，到「设置」最上面填');
@@ -4129,6 +4137,7 @@ async function run(opts) {
         if (N.settings().naiMode === 'gpt' && opts.backend !== 'comfy') opts.refs = null;
         if (!opts.noVibe && opts.director === undefined) opts.director = await charRefs();
         if (!opts.noVibe && !opts.director && opts.refs === undefined) opts.refs = await vibeRefs();
+        chibiChars(opts);
         const r = await N.generate(opts);
         const vg = getData().vibeGroups?.[getData().vibeActive];
         runtime.lastSent = { ...r.sent, vibes: opts.refs?.images?.length ? { name: vg?.name || '', n: opts.refs.images.length } : null, director: r.sent.director ?? (opts.director?.length || 0) };
@@ -7085,18 +7094,18 @@ async function aiSceneName(p) {
     if (!clean) throw new Error('AI 没给出名字');
     return clean;
 }
-/** 内置固定提示词：只写人数、动作、互动、构图，不写长相，套谁都行。人数用 2others 这种不分性别的写法 */
+/** 内置固定提示词：只写人数、动作、互动、构图，不写长相，套谁都行。人数不写，由入画角色自己带（2boys、1girl 1boy 这类） */
 const BUILTIN_SCENES = [
     { name: "手机挡半脸自拍", tags: ["单人", "半身", "日常"], scene: "solo, selfie, holding phone, phone covering face, hand on own cheek, head tilt, looking at viewer, smile, parted lips, upper body, close-up, stuffed animal in foreground, simple background, white background, depth of field" },
-    { name: "借火点烟", tags: ["双人", "特写", "夜晚"], scene: "2others, lighting cigarette, holding lighter, cupping hands, cigarette in mouth, holding cigarette, faces close together, leaning in, eyes closed, half-closed eyes, profile, upper body, close-up, from side, flame, light from below, dramatic lighting, dark" },
-    { name: "捏下巴对视", tags: ["双人", "半身", "对峙"], scene: "2others, grabbing another's chin, hand on another's chin, looking at another, eye contact, faces close together, leaning towards each other, kneeling, arm support, from side, cowboy shot, tension, simple background" },
-    { name: "坐在怀里抬头看", tags: ["双人", "半身", "日常"], scene: "2others, sitting on lap, sitting between legs, hug from behind, arms around another, looking up at another, looking down at another, smile, knees up, height difference, upper body, border" },
-    { name: "POV 握手腕抵在嘴边", tags: ["单人", "POV", "半身", "夜晚"], scene: "1other, pov, pov hands, holding another's wrist, another's hand on face, hand to own mouth, looking at viewer, smirk, head tilt, upper body, dark, chromatic aberration" },
-    { name: "摸头吻额头", tags: ["双人", "特写", "约会"], scene: "2others, forehead kiss, hand on another's head, leaning down, looking up, height difference, eyes closed, close-up, from side, dappled sunlight" },
-    { name: "指尖抬下巴", tags: ["双人", "半身", "约会", "侧面"], scene: "2others, finger on another's chin, lifting another's chin, looking up at another, looking down at another, height difference, profile, blush, smile, upper body, from side, simple background" },
-    { name: "偷亲脸颊", tags: ["双人", "特写", "日常"], scene: "2others, cheek kiss, kissing cheek, faces close together, eyes closed, blush, surprised, wide-eyed, close-up, portrait, simple background" },
-    { name: "搭肩埋颈", tags: ["双人", "半身", "约会"], scene: "2others, hand on another's shoulder, face against another's neck, leaning on another, looking at viewer, close together, upper body, heart, patterned background" },
-    { name: "搂肩贴脸", tags: ["双人", "特写", "日常"], scene: "2others, cheek-to-cheek, arm around shoulder, hug, one eye closed, wink, open mouth, smile, hand up, looking at viewer, heart, sparkle, upper body, close-up, from above, white background" },
+    { name: "借火点烟", tags: ["双人", "特写", "夜晚"], scene: "lighting cigarette, holding lighter, cupping hands, cigarette in mouth, holding cigarette, faces close together, leaning in, eyes closed, half-closed eyes, profile, upper body, close-up, from side, flame, light from below, dramatic lighting, dark" },
+    { name: "捏下巴对视", tags: ["双人", "半身", "对峙"], scene: "grabbing another's chin, hand on another's chin, looking at another, eye contact, faces close together, leaning towards each other, kneeling, arm support, from side, cowboy shot, tension, simple background" },
+    { name: "坐在怀里抬头看", tags: ["双人", "半身", "日常"], scene: "sitting on lap, sitting between legs, hug from behind, arms around another, looking up at another, looking down at another, smile, knees up, height difference, upper body, border" },
+    { name: "POV 握手腕抵在嘴边", tags: ["单人", "POV", "半身", "夜晚"], scene: "pov, pov hands, holding another's wrist, another's hand on face, hand to own mouth, looking at viewer, smirk, head tilt, upper body, dark, chromatic aberration" },
+    { name: "摸头吻额头", tags: ["双人", "特写", "约会"], scene: "forehead kiss, hand on another's head, leaning down, looking up, height difference, eyes closed, close-up, from side, dappled sunlight" },
+    { name: "指尖抬下巴", tags: ["双人", "半身", "约会", "侧面"], scene: "finger on another's chin, lifting another's chin, looking up at another, looking down at another, height difference, profile, blush, smile, upper body, from side, simple background" },
+    { name: "偷亲脸颊", tags: ["双人", "特写", "日常"], scene: "cheek kiss, kissing cheek, faces close together, eyes closed, blush, surprised, wide-eyed, close-up, portrait, simple background" },
+    { name: "搭肩埋颈", tags: ["双人", "半身", "约会"], scene: "hand on another's shoulder, face against another's neck, leaning on another, looking at viewer, close together, upper body, heart, patterned background" },
+    { name: "搂肩贴脸", tags: ["双人", "特写", "日常"], scene: "cheek-to-cheek, arm around shoulder, hug, one eye closed, wink, open mouth, smile, hand up, looking at viewer, heart, sparkle, upper body, close-up, from above, white background" },
     { name: "披纱举过头顶", tags: ["单人", "全身", "立绘"], scene: "solo, standing, arms up, holding shawl over head, lace shawl, legs together, knees together, pigeon-toed, head tilt, looking at viewer, full body, simple background, blue background, shadow" },
     { name: "弯腰插兜看镜头", tags: ["单人", "全身", "仰拍", "户外"], scene: "solo, leaning forward, bent over, hand in pocket, looking at viewer, head tilt, one leg forward, walking, standing on ledge, from below, full body, blue sky, outdoors" },
     { name: "QQ人·从餐盘里蹦出来", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, mini person, jumping, arms up, legs apart, surprised, open mouth, on plate, cloche, disembodied hands, holding plate, lifting cloche, motion lines, simple background" },
@@ -7110,12 +7119,12 @@ const BUILTIN_SCENES = [
     { name: "QQ人·双手捧脸", tags: ["单人", "QQ人", "半身"], scene: "chibi, super deformed, hands on own cheeks, blush, happy, closed eyes, flower background, upper body, simple background" },
     { name: "QQ人·跑跳", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, running, jumping, arms up, open mouth, happy, motion lines, speed lines, full body, simple background" },
     { name: "QQ人·表情包三连", tags: ["单人", "QQ人", "漫画格"], scene: "chibi, super deformed, multiple views, 3koma, angry, crying, laughing, sweatdrop, emoji, simple background" },
-    { name: "QQ人·并排比耶", tags: ["双人", "QQ人", "全身"], scene: "2others, chibi, super deformed, standing side by side, v sign, smile, full body, simple background, white background" },
-    { name: "QQ人·贴贴蹭脸", tags: ["双人", "QQ人", "半身", "日常"], scene: "2others, chibi, super deformed, cheek-to-cheek, hug, closed eyes, happy, sparkle, upper body, simple background" },
-    { name: "QQ人·一个抱着一个", tags: ["双人", "QQ人", "全身"], scene: "2others, chibi, super deformed, princess carry, carrying person, surprised, blush, motion lines, full body, simple background" },
-    { name: "QQ人·拌嘴", tags: ["双人", "QQ人", "半身"], scene: "2others, chibi, super deformed, arguing, face-to-face, angry, puffy cheeks, anger vein, sparks, upper body, simple background" },
-    { name: "QQ人·叠罗汉", tags: ["三人", "QQ人", "全身"], scene: "3others, chibi, super deformed, person on shoulders, stacking, standing on another, arms up, happy, full body, simple background" },
-    { name: "QQ人·排排坐", tags: ["三人", "QQ人", "全身", "日常"], scene: "3others, chibi, super deformed, sitting in a row, side by side, legs dangling, eating, smile, full body, simple background" },
+    { name: "QQ人·并排比耶", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, standing side by side, v sign, smile, full body, simple background, white background" },
+    { name: "QQ人·贴贴蹭脸", tags: ["双人", "QQ人", "半身", "日常"], scene: "chibi, super deformed, cheek-to-cheek, hug, closed eyes, happy, sparkle, upper body, simple background" },
+    { name: "QQ人·一个抱着一个", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, princess carry, carrying person, surprised, blush, motion lines, full body, simple background" },
+    { name: "QQ人·拌嘴", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, arguing, face-to-face, angry, puffy cheeks, anger vein, sparks, upper body, simple background" },
+    { name: "QQ人·叠罗汉", tags: ["三人", "QQ人", "全身"], scene: "chibi, super deformed, person on shoulders, stacking, standing on another, arms up, happy, full body, simple background" },
+    { name: "QQ人·排排坐", tags: ["三人", "QQ人", "全身", "日常"], scene: "chibi, super deformed, sitting in a row, side by side, legs dangling, eating, smile, full body, simple background" },
     { name: "证件照", tags: ["单人", "证件照", "特写"], scene: "solo, id photo, looking at viewer, facing viewer, straight-on, closed mouth, upper body, portrait, blue background, simple background, even lighting" },
     { name: "头像特写", tags: ["单人", "头像", "特写"], scene: "solo, portrait, close-up, face focus, looking at viewer, light smile, head tilt, simple background, bokeh" },
     { name: "立绘三视图", tags: ["单人", "立绘", "全身"], scene: "solo, reference sheet, multiple views, front view, side view, back view, standing, arms at sides, full body, white background, simple background" },
@@ -7129,46 +7138,46 @@ const BUILTIN_SCENES = [
     { name: "战斗起手", tags: ["单人", "全身", "战斗"], scene: "solo, fighting stance, holding weapon, dynamic pose, serious, glaring, wind, debris, motion blur, full body, dramatic lighting" },
     { name: "看书", tags: ["单人", "半身", "室内", "日常"], scene: "solo, reading, holding book, open book, looking down, sitting, armchair, bookshelf, indoors, soft lighting, upper body" },
     { name: "喝咖啡", tags: ["单人", "半身", "室内", "日常"], scene: "solo, holding cup, drinking, coffee, steam, cafe, table, sitting, light smile, indoors, upper body, depth of field" },
-    { name: "牵手散步", tags: ["双人", "全身", "户外", "约会"], scene: "2others, holding hands, walking, side by side, looking at another, smile, street, trees, outdoors, full body, from behind" },
-    { name: "背靠背", tags: ["双人", "半身", "战斗"], scene: "2others, back-to-back, standing, holding weapon, serious, looking to the side, wind, upper body, dramatic lighting" },
-    { name: "壁咚", tags: ["双人", "半身", "约会"], scene: "2others, kabedon, hand on wall, against wall, leaning in, looking at another, height difference, blush, upper body, from side" },
-    { name: "额头相抵", tags: ["双人", "特写", "约会"], scene: "2others, forehead-to-forehead, eyes closed, holding hands, smile, faces close together, close-up, from side, soft lighting" },
-    { name: "公主抱", tags: ["双人", "全身", "约会"], scene: "2others, princess carry, carrying person, arms around neck, looking at another, blush, full body, outdoors" },
-    { name: "同撑一把伞", tags: ["双人", "全身", "户外", "雨天"], scene: "2others, sharing umbrella, holding umbrella, standing close, rain, looking at another, street, outdoors, full body, from behind" },
-    { name: "对峙", tags: ["双人", "全身", "战斗", "对峙"], scene: "2others, facing another, standoff, holding weapon, glaring, distance between, wind, dust, full body, wide shot, from side" },
-    { name: "并肩作战", tags: ["双人", "全身", "战斗"], scene: "2others, side by side, fighting stance, holding weapon, dynamic pose, serious, explosion, debris, full body, from below" },
-    { name: "喂食", tags: ["双人", "半身", "室内", "日常"], scene: "2others, feeding, holding spoon, open mouth, sitting, table, food, smile, blush, indoors, upper body" },
-    { name: "摸头", tags: ["双人", "半身", "日常"], scene: "2others, headpat, hand on another's head, height difference, closed eyes, happy, smile, upper body" },
-    { name: "POV 伸手拉人", tags: ["单人", "POV", "全身", "户外"], scene: "1other, pov, reaching towards viewer, outstretched hand, holding hands with viewer, looking back, smile, running, outdoors, full body, from behind" },
-    { name: "膝枕", tags: ["双人", "全身", "室内", "日常"], scene: "2others, lap pillow, lying on lap, sitting, looking down at another, hand on another's head, smile, indoors, from above" },
-    { name: "合影", tags: ["三人", "半身", "日常"], scene: "3others, group photo, side by side, v sign, smile, looking at viewer, upper body, simple background" },
-    { name: "围坐吃饭", tags: ["多人", "室内", "日常"], scene: "multiple others, sitting, around table, eating, food, laughing, indoors, warm lighting, from above, wide shot" },
-    { name: "三角站位", tags: ["三人", "全身"], scene: "3others, standing, triangle formation, one in front, looking at viewer, serious, full body, simple background, from below" },
-    { name: "群像海报", tags: ["多人", "全身"], scene: "multiple others, group, poster, everyone, standing, varied poses, looking at viewer, dramatic lighting, full body" },
-    { name: "打闹", tags: ["三人", "全身", "日常"], scene: "3others, playing, chasing, laughing, running, motion lines, outdoors, full body" },
-    { name: "队伍集合", tags: ["多人", "全身", "战斗"], scene: "multiple others, lineup, standing in a row, holding weapon, serious, wind, from below, full body, wide shot" },
+    { name: "牵手散步", tags: ["双人", "全身", "户外", "约会"], scene: "holding hands, walking, side by side, looking at another, smile, street, trees, outdoors, full body, from behind" },
+    { name: "背靠背", tags: ["双人", "半身", "战斗"], scene: "back-to-back, standing, holding weapon, serious, looking to the side, wind, upper body, dramatic lighting" },
+    { name: "壁咚", tags: ["双人", "半身", "约会"], scene: "kabedon, hand on wall, against wall, leaning in, looking at another, height difference, blush, upper body, from side" },
+    { name: "额头相抵", tags: ["双人", "特写", "约会"], scene: "forehead-to-forehead, eyes closed, holding hands, smile, faces close together, close-up, from side, soft lighting" },
+    { name: "公主抱", tags: ["双人", "全身", "约会"], scene: "princess carry, carrying person, arms around neck, looking at another, blush, full body, outdoors" },
+    { name: "同撑一把伞", tags: ["双人", "全身", "户外", "雨天"], scene: "sharing umbrella, holding umbrella, standing close, rain, looking at another, street, outdoors, full body, from behind" },
+    { name: "对峙", tags: ["双人", "全身", "战斗", "对峙"], scene: "facing another, standoff, holding weapon, glaring, distance between, wind, dust, full body, wide shot, from side" },
+    { name: "并肩作战", tags: ["双人", "全身", "战斗"], scene: "side by side, fighting stance, holding weapon, dynamic pose, serious, explosion, debris, full body, from below" },
+    { name: "喂食", tags: ["双人", "半身", "室内", "日常"], scene: "feeding, holding spoon, open mouth, sitting, table, food, smile, blush, indoors, upper body" },
+    { name: "摸头", tags: ["双人", "半身", "日常"], scene: "headpat, hand on another's head, height difference, closed eyes, happy, smile, upper body" },
+    { name: "POV 伸手拉人", tags: ["单人", "POV", "全身", "户外"], scene: "pov, reaching towards viewer, outstretched hand, holding hands with viewer, looking back, smile, running, outdoors, full body, from behind" },
+    { name: "膝枕", tags: ["双人", "全身", "室内", "日常"], scene: "lap pillow, lying on lap, sitting, looking down at another, hand on another's head, smile, indoors, from above" },
+    { name: "合影", tags: ["三人", "半身", "日常"], scene: "group photo, side by side, v sign, smile, looking at viewer, upper body, simple background" },
+    { name: "围坐吃饭", tags: ["多人", "室内", "日常"], scene: "sitting, around table, eating, food, laughing, indoors, warm lighting, from above, wide shot" },
+    { name: "三角站位", tags: ["三人", "全身"], scene: "standing, triangle formation, one in front, looking at viewer, serious, full body, simple background, from below" },
+    { name: "群像海报", tags: ["多人", "全身"], scene: "group, poster, everyone, standing, varied poses, looking at viewer, dramatic lighting, full body" },
+    { name: "打闹", tags: ["三人", "全身", "日常"], scene: "playing, chasing, laughing, running, motion lines, outdoors, full body" },
+    { name: "队伍集合", tags: ["多人", "全身", "战斗"], scene: "lineup, standing in a row, holding weapon, serious, wind, from below, full body, wide shot" },
     { name: "电影宽画幅", tags: ["构图"], scene: "cinematic, letterboxed, wide shot, depth of field, film grain, dramatic lighting" },
     { name: "鱼眼", tags: ["构图"], scene: "fisheye, from above, dynamic angle, foreshortening, looking at viewer" },
     { name: "对角线构图", tags: ["构图"], scene: "dutch angle, diagonal composition, dynamic angle, motion lines" },
     { name: "剪影逆光", tags: ["构图", "夜晚"], scene: "silhouette, backlighting, sunset, lens flare, rim lighting, from behind" },
-    { name: "QQ人·捧花和举杯", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, 2others, sitting together, holding bouquet, holding wine glass, smile, bats, sparkle, upper body" },
-    { name: "QQ人·坐在背上", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, sitting on another's back, all fours, bone in mouth, witch hat, stars, full body" },
-    { name: "QQ人·天使和恶魔", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, angel and demon, halo, angel wings, demon wings, demon tail, crossed arms, pout, one eye closed, hand on own cheek, hearts, clouds, full body" },
-    { name: "QQ人·从背后搂着哭", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, 2others, hug from behind, chin on another's head, crying, tears, pout, ghost, candy, upper body" },
-    { name: "QQ人·颠倒同眠", tags: ["双人", "QQ人", "全身", "俯拍"], scene: "chibi, super deformed, 2others, lying, sleeping, head-to-toe, curled up, eyes closed, from above, full body, simple background" },
-    { name: "QQ人·牵手同行", tags: ["双人", "QQ人", "全身", "背影"], scene: "chibi, super deformed, 2others, holding hands, walking, from behind, waving, arm up, full body, simple background" },
-    { name: "QQ人·纸杯传声", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, tin can phone, string, holding cup to ear, half-closed eyes, heart, envelope, full body, simple background" },
-    { name: "QQ人·红线连小指", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, red string of fate, pinky out, tongue out, one eye closed, >_<, standing side by side, full body" },
-    { name: "QQ人·一起捧爱心", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, 2others, holding heart together, cheek-to-cheek, one eye closed, smile, upper body, simple background" },
-    { name: "QQ人·一个生气一个得意", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, anger vein, angry, puff of air, >_<, smug, standing side by side, full body, simple background" },
-    { name: "QQ人·脸挤脸", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, 2others, faces pressed together, squished cheeks, closed eyes, smile, hearts, upper body, simple background" },
-    { name: "QQ人·跪坐抱抱", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, hug, arm around shoulder, seiza, kneeling, laughing, closed eyes, hearts, full body" },
-    { name: "QQ人·推开脸", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, hand on another's face, pushing face away, annoyed, anger vein, blush, leaning in, kneeling, hearts, full body" },
-    { name: "QQ人·害羞抱膝", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, sitting, hugging own legs, embarrassed, blush, steam, snowman, standing, smile, full body" },
-    { name: "QQ人·靠着坐", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, sitting, leaning on another, legs out, closed eyes, smile, sleepy, flowers, full body" },
-    { name: "QQ人·跳到身上亲", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, jumping on another, legs around waist, kissing cheek, surprised, carrying person, full body" },
-    { name: "QQ人·牵手打招呼", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, holding hands, waving, cotton candy, eating, from behind, full body, simple background" },
-    { name: "QQ人·靠坐思考", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, sitting, back to back, leaning on another, hand on own chin, thinking, hugging own legs, full body" },
+    { name: "QQ人·捧花和举杯", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, sitting together, holding bouquet, holding wine glass, smile, bats, sparkle, upper body" },
+    { name: "QQ人·坐在背上", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, sitting on another's back, all fours, bone in mouth, witch hat, stars, full body" },
+    { name: "QQ人·天使和恶魔", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, angel and demon, halo, angel wings, demon wings, demon tail, crossed arms, pout, one eye closed, hand on own cheek, hearts, clouds, full body" },
+    { name: "QQ人·从背后搂着哭", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, hug from behind, chin on another's head, crying, tears, pout, ghost, candy, upper body" },
+    { name: "QQ人·颠倒同眠", tags: ["双人", "QQ人", "全身", "俯拍"], scene: "chibi, super deformed, lying, sleeping, head-to-toe, curled up, eyes closed, from above, full body, simple background" },
+    { name: "QQ人·牵手同行", tags: ["双人", "QQ人", "全身", "背影"], scene: "chibi, super deformed, holding hands, walking, from behind, waving, arm up, full body, simple background" },
+    { name: "QQ人·纸杯传声", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, tin can phone, string, holding cup to ear, half-closed eyes, heart, envelope, full body, simple background" },
+    { name: "QQ人·红线连小指", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, red string of fate, pinky out, tongue out, one eye closed, >_<, standing side by side, full body" },
+    { name: "QQ人·一起捧爱心", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, holding heart together, cheek-to-cheek, one eye closed, smile, upper body, simple background" },
+    { name: "QQ人·一个生气一个得意", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, anger vein, angry, puff of air, >_<, smug, standing side by side, full body, simple background" },
+    { name: "QQ人·脸挤脸", tags: ["双人", "QQ人", "半身"], scene: "chibi, super deformed, faces pressed together, squished cheeks, closed eyes, smile, hearts, upper body, simple background" },
+    { name: "QQ人·跪坐抱抱", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, hug, arm around shoulder, seiza, kneeling, laughing, closed eyes, hearts, full body" },
+    { name: "QQ人·推开脸", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, hand on another's face, pushing face away, annoyed, anger vein, blush, leaning in, kneeling, hearts, full body" },
+    { name: "QQ人·害羞抱膝", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, sitting, hugging own legs, embarrassed, blush, steam, snowman, standing, smile, full body" },
+    { name: "QQ人·靠着坐", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, sitting, leaning on another, legs out, closed eyes, smile, sleepy, flowers, full body" },
+    { name: "QQ人·跳到身上亲", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, jumping on another, legs around waist, kissing cheek, surprised, carrying person, full body" },
+    { name: "QQ人·牵手打招呼", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, holding hands, waving, cotton candy, eating, from behind, full body, simple background" },
+    { name: "QQ人·靠坐思考", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, sitting, back to back, leaning on another, hand on own chin, thinking, hugging own legs, full body" },
     { name: "QQ人·抱猫撸猫", tags: ["单人", "QQ人", "全身", "日常"], scene: "chibi, super deformed, solo, holding cat, hugging cat, cat, closed eyes, happy, sitting, flowers, full body" },
     { name: "QQ人·握拳欢呼", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, clenched hand, arm up, fist pump, jumping, open mouth, excited, full body, simple background" },
     { name: "QQ人·推小推车", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, pushing cart, hand truck, leaning forward, walking, :o, full body, simple background" },
@@ -7186,7 +7195,7 @@ const BUILTIN_SCENES = [
     { name: "QQ人·跳舞", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, dancing, arm up, standing on one leg, happy, open mouth, motion lines, full body" },
     { name: "QQ人·猫耳抱鱼", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, cat ears, cat tail, sitting, holding fish, eating, smile, full body, simple background" },
     { name: "QQ人·骑平衡车", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, riding scooter, segway, standing, from side, full body, simple background" },
-    { name: "QQ人·拔河", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, 2others, tug of war, pulling rope, leaning back, >_<, straining, full body, simple background" },
+    { name: "QQ人·拔河", tags: ["双人", "QQ人", "全身"], scene: "chibi, super deformed, tug of war, pulling rope, leaning back, >_<, straining, full body, simple background" },
     { name: "QQ人·扛长棍", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, holding staff, staff over shoulders, smile, standing, full body, simple background" },
     { name: "QQ人·冲浪", tags: ["单人", "QQ人", "全身", "户外"], scene: "chibi, super deformed, solo, surfing, surfboard, arms out, balancing, happy, waves, full body" },
     { name: "QQ人·拿手电筒", tags: ["单人", "QQ人", "全身", "夜晚"], scene: "chibi, super deformed, solo, holding flashlight, walking, nervous, sweatdrop, dark, full body" },
@@ -7199,10 +7208,10 @@ const BUILTIN_SCENES = [
     { name: "QQ人·撑伞", tags: ["单人", "QQ人", "全身", "雨天"], scene: "chibi, super deformed, solo, holding umbrella, standing, smile, rain, full body, simple background" },
     { name: "QQ人·摔倒", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, falling, tripping, ball, >_<, motion lines, full body, simple background" },
     { name: "QQ人·狐尾奔跑", tags: ["单人", "QQ人", "全身"], scene: "chibi, super deformed, solo, fox tail, running, arm out, angry, motion lines, full body, simple background" },
-    { name: "膝枕上流泪告别", tags: ["双人", "全身", "侧面"], scene: "2others, lap pillow, kneeling, lying on back, hand on another's head, wiping tears, crying, eyes closed, sad, injured, from side, wide shot, white background" },
-    { name: "整理领口", tags: ["双人", "半身", "约会", "侧面"], scene: "2others, adjusting another's clothes, hand on another's collar, height difference, looking at another, confused, ?, head wreath, holding bouquet, standing, cowboy shot, from side" },
-    { name: "贴墙捧脸", tags: ["双人", "半身", "约会"], scene: "2others, hands on another's face, against wall, face-to-face, faces close together, about to kiss, blush, wide-eyed, surprised, standing, cowboy shot, rock wall" },
-    { name: "背影额头相抵·蝴蝶", tags: ["双人", "半身", "背影"], scene: "2others, from behind, facing another, forehead-to-forehead, arms around another, butterfly, sparkle, upper body, white background" },
+    { name: "膝枕上流泪告别", tags: ["双人", "全身", "侧面"], scene: "lap pillow, kneeling, lying on back, hand on another's head, wiping tears, crying, eyes closed, sad, injured, from side, wide shot, white background" },
+    { name: "整理领口", tags: ["双人", "半身", "约会", "侧面"], scene: "adjusting another's clothes, hand on another's collar, height difference, looking at another, confused, ?, head wreath, holding bouquet, standing, cowboy shot, from side" },
+    { name: "贴墙捧脸", tags: ["双人", "半身", "约会"], scene: "hands on another's face, against wall, face-to-face, faces close together, about to kiss, blush, wide-eyed, surprised, standing, cowboy shot, rock wall" },
+    { name: "背影额头相抵·蝴蝶", tags: ["双人", "半身", "背影"], scene: "from behind, facing another, forehead-to-forehead, arms around another, butterfly, sparkle, upper body, white background" },
     { name: "侧脸·蝴蝶环绕", tags: ["单人", "半身", "侧面"], scene: "solo, profile, looking to the side, butterflies around, butterfly on hair, upper body, from side, white background" },
     { name: "抱一捧苹果", tags: ["单人", "半身", "户外", "日常"], scene: "solo, holding apples, carrying fruit, looking at viewer, smile, standing, wind, hair blowing, village, blue sky, rainbow, flowers in foreground, cowboy shot, outdoors, depth of field" }
 ];
