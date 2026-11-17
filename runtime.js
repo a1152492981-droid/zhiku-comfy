@@ -1712,7 +1712,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.82（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.83（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1761,7 +1761,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.82';
+globalThis.__PC_VERSION = '0.8.83';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -3294,8 +3294,8 @@ function createNaiGate({sleep=ms=>new Promise(r=>setTimeout(r,ms)),now=()=>Date.
     const seconds=Number(e.retryAfter),date=Date.parse(e.retryAfter);
     const retry=Number.isFinite(seconds)&&seconds>0?seconds*1000:Number.isFinite(date)?Math.max(0,date-now()):0;
     next=now()+Math.max(retry,5000*2**attempt);const wait=Math.ceil((next-now())/1000);
-    notice(e.status===429?'请求受到限流（共享账号可能有人同时在用），等待 '+wait+' 秒后重试':'NovelAI 服务器返回 '+e.status+'，等待 '+wait+' 秒后重试');
-    globalThis.__zkLog?.('生图重试',(e.status===429?'限流 429':'服务器 '+e.status)+' · 第 '+(attempt+1)+' 次重试，等 '+wait+' 秒');
+    notice(e.status===429?'请求受到限流（共享账号可能有人同时在用），等待 '+wait+' 秒后重试':(e.status?'NovelAI 服务器返回 '+e.status:'只收到生成中的预览图')+'，等待 '+wait+' 秒后重试');
+    globalThis.__zkLog?.('生图重试',(e.status===429?'限流 429':e.status?'服务器 '+e.status:'只收到预览图')+' · 第 '+(attempt+1)+' 次重试，等 '+wait+' 秒');
    }finally{next=Math.max(next,now()+gap);}
   }
  });queue=job.catch(()=>{});return job;}};
@@ -3764,6 +3764,7 @@ async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {
     },responseInfo);
     const buf = new Uint8Array(await r.arrayBuffer());
     if (!r.ok) throw Object.assign(new Error(explain(r.status, new TextDecoder().decode(buf))),{status:r.status,retryAfter:r.headers?.get('Retry-After')});
+    responseInfo.want={w:Number(params.width)||0,h:Number(params.height)||0};
     try{const out={image:await imageFromResponse(buf,responseInfo),sent};anlasSoon();return out;}catch(e){siteForget('/ai/generate-image');throw e;}
 }
 
@@ -3819,12 +3820,22 @@ function findPngs(u8) {
  */
 async function imageFromResponse(u8, info = {}) {
     info.size = u8.length;
-    const pick = (list, what) => { info.format = list.length > 1 ? `${what}，里面 ${list.length} 张图，用了最后一张` : what; return list[list.length - 1]; };
+    const pngSize = f => { try { if (f[0] !== 137 || f[1] !== 80) return 0; const dv = new DataView(f.buffer, f.byteOffset, f.byteLength); return dv.getUint32(16) * dv.getUint32(20); } catch { return 0; } };
+    const want = info.want && info.want.w && info.want.h ? info.want.w * info.want.h : 0;
+    const pick = (list, what) => {
+        let best = list.length - 1;
+        const sizes = list.map(f => (f instanceof Uint8Array ? pngSize(f) : 0));
+        if (sizes.some(Boolean)) { const max = Math.max(...sizes); best = sizes.lastIndexOf(max); }
+        info.format = list.length > 1 ? `${what}，里面 ${list.length} 张图，${best === list.length - 1 ? '用了最后一张' : `用了最大的第 ${best + 1} 张`}` : what;
+        if (want && sizes[best] > 1 && sizes[best] < want * 0.25) { info.format += '（只是生成中的预览）'; throw Object.assign(new Error('只收到生成中的预览图，最终图没传回来（多半是连接中途断了或站点超时）。重试一下；老是这样就把尺寸或步数调小，或换个连接方式'), { retryable: true }); }
+        return list[best];
+    };
     const asUrl = file => `data:${imgMime(file) || 'image/png'};base64,` + toB64(file);
     const mime = imgMime(u8);
     if (mime) {
         const more = mime === 'image/png' ? findPngs(u8) : [];
         if (more.length) return asUrl(pick(more, 'PNG 图片'));
+        if (mime === 'image/png') return asUrl(pick([u8], 'PNG 图片'));
         info.format = mime.replace('image/', '').toUpperCase() + ' 图片';
         return asUrl(u8);
     }
