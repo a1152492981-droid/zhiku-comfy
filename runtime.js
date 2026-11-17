@@ -1619,8 +1619,9 @@ function resolveImageCharacters(prompt, roster) {
         const sceneParts = blocks.filter(b => !b.id).map(b => parsePart(b.value));
         scene = [scene, ...sceneParts].filter(Boolean).join(', ');
         for (const block of blocks.filter(b => b.type === 'prompt')) {
-            const centerMatch = block.value.match(/\|centers:\s*([\d.]+)\s*,\s*([\d.]+)\s*$/i);
-            const center = centerMatch ? { x: Number(centerMatch[1]), y: Number(centerMatch[2]) } : null;
+            const gridMatch = block.value.match(/\|\s*centers?\s*:\s*([a-e])\s*([1-5])\s*$/i);
+            const centerMatch = gridMatch || block.value.match(/\|centers:\s*([\d.]+)\s*,\s*([\d.]+)\s*$/i);
+            const center = gridMatch ? { x: Math.round((0.1 + 0.2 * ('abcde'.indexOf(gridMatch[1].toLowerCase()))) * 10) / 10, y: Math.round((0.1 + 0.2 * (Number(gridMatch[2]) - 1)) * 10) / 10 } : centerMatch ? { x: Number(centerMatch[1]), y: Number(centerMatch[2]) } : null;
             const value = centerMatch ? block.value.slice(0, centerMatch.index) : block.value;
             const uc = blocks.filter(b => b.id === block.id && b.type === 'uc').map(b => b.value).join(', ');
             const start = picks.length;
@@ -1711,7 +1712,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.81（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.82（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1761,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.81';
+globalThis.__PC_VERSION = '0.8.82';
 
 // ───── model.js ─────
 const __mod_model = (() => {
