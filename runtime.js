@@ -3327,6 +3327,7 @@ function naiRequestSnapshot(value, key = '', image = false) {
 }
 function generate(opts) {
     opts={...opts,src:opts.src || '其他生图入口'};
+    if(comfyAll()&&!opts.comic&&opts.backend!=='comfy')opts={...opts,backend:'comfy',director:null,refs:null};
     const cfg=settings(),nai=opts.backend!=='comfy'&&cfg.naiMode!=='gpt';
     const divided=nai&&cfg.naiMode!=='tavern'&&(opts.comic||cfg.novelaimode!=='nai-diffusion-3')&&!(cfg.naiMode==='site'&&String(cfg.naiSiteSimple)==='true'&&!opts.comic);
     const chars=divided?normalizeNaiChars(opts.chars):[];
@@ -3359,9 +3360,42 @@ const COMFY_WORKFLOW = {
     8: { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
     9: { class_type: 'SaveImage', inputs: { filename_prefix: 'zhiku', images: ['8', 0] } },
 };
+/** 垫图用的内置工作流：底图从 ComfyUI 的 input 文件夹读（先传上去） */
+const COMFY_I2I = (() => {
+    const wf = JSON.parse(JSON.stringify(COMFY_WORKFLOW));
+    delete wf[5];
+    wf[3].inputs.denoise = '%denoise%'; wf[3].inputs.latent_image = ['10', 0];
+    wf[10] = { class_type: 'VAEEncode', inputs: { pixels: ['11', 0], vae: ['4', 2] } };
+    wf[11] = { class_type: 'LoadImage', inputs: { image: '%image%' } };
+    return wf;
+})();
+/** 局部重绘用的内置工作流：遮罩白色 = 重画 */
+const COMFY_INPAINT = (() => {
+    const wf = JSON.parse(JSON.stringify(COMFY_I2I));
+    wf[3].inputs.latent_image = ['12', 0];
+    wf[12] = { class_type: 'SetLatentNoiseMask', inputs: { samples: ['10', 0], mask: ['13', 0] } };
+    wf[13] = { class_type: 'LoadImageMask', inputs: { image: '%mask%', channel: 'red' } };
+    return wf;
+})();
+/** 把一张 PNG（不带前缀的 base64）传进 ComfyUI 的 input 文件夹，返回 LoadImage 认的文件名 */
+async function comfyUpload(url, b64, name) {
+    const fd = new FormData();
+    fd.append('image', b64ToBlob(b64, 'image/png'), name);
+    fd.append('overwrite', 'true');
+    let r;
+    try { r = await fetch(url + '/upload/image', { method: 'POST', body: fd }); }
+    catch { throw new Error('浏览器传不了图给 ComfyUI：垫图和局部重绘要 ComfyUI 启动时加上 --enable-cors-header'); }
+    if (!r.ok) throw new Error('ComfyUI 收图失败（HTTP ' + r.status + '）');
+    const j = await r.json();
+    return j.subfolder ? j.subfolder + '/' + j.name : j.name;
+}
 const comfyUrl = (s = settings()) => String(s.comfyUrl || '').trim().replace(/\/+$/, '');
 const comfyReady = (s = settings()) => !!comfyUrl(s);
-const chatBackend = (s = settings()) => String(s.comfyChat) === 'true' ? 'comfy' : 'nai';
+const chatBackend = (s = settings()) => String(s.comfyChat) === 'true' || String(s.comfyAll) === 'true' ? 'comfy' : 'nai';
+/** 「所有生图都用本地 ComfyUI」：打开时除漫画外的生图都走 ComfyUI */
+const comfyAll = (s = settings()) => String(s.comfyAll) === 'true';
+/** 生图前的检查：全走 ComfyUI 时看 ComfyUI 地址，否则看 NovelAI key */
+const genReady = (s = settings()) => comfyAll(s) ? comfyReady(s) : isReady();
 /** 没填过的话，从酒馆自带「图片生成」插件的 ComfyUI 设置里搬过来；那边也没有就用本机 8188 */
 function comfyAutoConfig() {
     const s = settings();
@@ -3654,7 +3688,16 @@ async function comfyGenerate(opts, s) {
     const seed = String(opts.seed ?? s.comfySeed ?? '').trim() !== '' && Number.isSafeInteger(sd) && sd >= 0 ? sd : Math.floor(Math.random() * 4294967294) + 1;
     const vals = { prompt: positive, negative_prompt: negative, model: String(s.comfyModel || '').trim(), width: w, height: h, seed, steps: Number(s.comfySteps) || 28, scale: Number(s.comfyCfg) || 6, sampler: s.comfySampler || 'euler_ancestral', scheduler: s.comfyScheduler || 'normal', denoise: 1, clip_skip: -2 };
     let api = COMFY_WORKFLOW;
-    if (custom) {
+    if (opts.i2i?.image) {
+        if (custom) throw new Error('自定义工作流暂不支持垫图和局部重绘：到智库「Comfy」页把工作流切回内置，并选好模型');
+        const unit = (v, fallback) => v != null && Number.isFinite(Number(v)) ? Math.max(0, Math.min(1, Number(v))) : fallback;
+        const tag = Date.now() + '_' + Math.floor(Math.random() * 1e6);
+        vals.denoise = unit(opts.i2i.strength, 0.7) || 0.01;
+        vals.image = await comfyUpload(url, opts.i2i.image, 'zhiku_i2i_' + tag + '.png');
+        if (opts.mask) vals.mask = await comfyUpload(url, opts.mask, 'zhiku_mask_' + tag + '.png');
+        api = opts.mask ? COMFY_INPAINT : COMFY_I2I;
+    }
+    else if (custom) {
         try { api = JSON.parse(String(s.comfyWfApi || '')); } catch { throw new Error('选的工作流没读好，到「Comfy」页重新选一次'); }
     }
     const wf = fillWorkflow(api, vals, !custom);
@@ -3704,7 +3747,7 @@ async function generateRequest(opts) {
 async function generateRequestInner(opts, recordNai = () => {}, responseInfo = {}) {
     const s = settings();
     if (opts.backend === 'comfy') {
-        if (opts.i2i?.image) throw new Error('ComfyUI 通道暂不支持这里的垫图，请使用 NovelAI 通道');
+        if (opts.i2i?.image && !comfyAll(s)) throw new Error('ComfyUI 通道暂不支持这里的垫图，请使用 NovelAI 通道');
         return comfyGenerate(opts, s);
     }
     if (s.naiMode === 'gpt') return gptGenerate(opts, s);
@@ -4128,7 +4171,10 @@ function inpaintModel(model = settings().novelaimode) {
 }
 
 /** image、mask 都是不带前缀的 PNG base64（mask：白色 = 重画） */
-function inpaint(opts){return __naiGate.run(()=>inpaintRequest(opts)).catch(e=>{throw netError(e);});}
+function inpaint(opts){return __naiGate.run(()=>comfyAll()?comfyInpaint(opts):inpaintRequest(opts)).catch(e=>{throw netError(e);});}
+async function comfyInpaint({ image, mask, prompt, negative, width, height, strength = 0.7 }) {
+    return (await comfyGenerate({ positive: prompt, negative, width, height, i2i: { image, strength }, mask }, settings())).image;
+}
 async function inpaintRequest({ image, mask, prompt, negative, width, height, strength = 0.7 }) {
     const s = settings();
     if (s.naiMode === 'gpt') throw new Error('OpenAI 兼容通道暂不支持局部重绘');
@@ -4159,7 +4205,7 @@ async function inpaintRequest({ image, mask, prompt, negative, width, height, st
     return imageFromResponse(buf);
 }
 
-return { withModel, anlasRefresh, anlasNow: () => pcAnlas, onAnlas: f => { pcAnlasSubs.add(f); return () => pcAnlasSubs.delete(f); }, adoptModelParams, comfyReady, chatBackend, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
+return { withModel, anlasRefresh, anlasNow: () => pcAnlas, onAnlas: f => { pcAnlasSubs.add(f); return () => pcAnlasSubs.delete(f); }, adoptModelParams, comfyReady, chatBackend, comfyAll, genReady, comfyAutoConfig, comfyConnect, comfyUseWorkflow, naiToSd, uiToApi, fillWorkflow, COMFY_Q, COMFY_UC, stopQueue:()=>{siteStopped=true;__naiGate.stop();stopGpt();}, MODELS, SAMPLERS, SCHEDULES, settings, save, isReady, ucpValue, buildParameters, generate, unzipFirstImage, testConnection, importFromZhihuiji, encKey, vibeSupported, encodeVibe, parseVibeFile, charRefSupported, inpaintModel, inpaint };
 })();
 
 // ───── engine.js ─────
@@ -4286,6 +4332,7 @@ function chibiChars(opts) {
 }
 
 async function run(opts) {
+    if (N.comfyAll?.()) opts.backend = 'comfy';
     if (opts.backend === 'comfy') { if (!N.comfyReady()) throw new Error('还没连上 ComfyUI，到智库「Comfy」页看看'); opts.noVibe = true; opts.director = null; }
     else if (!N.isReady()) throw new Error('还没填 NovelAI key，到「设置」最上面填');
     runtime.busy++;
@@ -6835,7 +6882,7 @@ const zSettings = () => { try { return SillyTavern.getContext().extensionSetting
 // ═════════════════════ 外框 ═════════════════════
 
 function openWindow(view) {
-    if (!view && !N.isReady()) view = 'settings';
+    if (!view && !(N.genReady?.() ?? N.isReady())) view = 'settings';
     if (!root) {
         root = DOC.createElement('div');
         root.id = 'pc-root';
@@ -7782,6 +7829,7 @@ function viewComfy(d) {
     <section class="pc-card pc-pad pc-mt">
       <div class="pc-label" style="margin-top:0">聊天里</div>
       <label class="pc-switch"><input type="checkbox" data-st-check="comfyChat" ${String(s.comfyChat) === 'true' ? 'checked' : ''}><span></span>聊天插图也用 ComfyUI<small>关着就还是 NovelAI。漫画一直用 NovelAI。NovelAI 的生图页和这页互不影响。</small></label>
+      <label class="pc-switch"><input type="checkbox" data-st-check="comfyAll" ${String(s.comfyAll) === 'true' ? 'checked' : ''}><span></span>所有生图都用本地 ComfyUI<small>打开后生图页、角色、衣柜、服装设计、例图、批量、聊天插图、垫图和局部重绘都用这页的 ComfyUI 设置，不需要 NovelAI key。漫画还是用漫画页自己选的通道。ComfyUI 用不了氛围和角色参考图。</small></label>
     </section>`;
 }
 function studioSavedRef(d) {
@@ -7812,8 +7860,8 @@ function viewStudio(d) {
     const sizeBtn = (pw, ph, t) => `<button class="pc-pill ${pw === w && ph === h ? 'on' : ''}" data-act="studiosize" data-size="${pw}x${ph}">${t}</button>`;
     const modelName = (N.MODELS.find(m => m[0] === s.novelaimode) || [0, s.novelaimode])[1];
     return `
-    ${!N.isReady() ? `<section class="pc-card pc-pad pc-warn-card"><b>还没填 NovelAI key</b><div class="pc-hint">填好才能生图。</div><button class="pc-btn dark pc-mt-s" data-act="nav" data-view="settings">去填</button></section>` : ''}
-    <section class="pc-card pc-pad ${!N.isReady() ? 'pc-mt' : ''}">
+    ${!(N.genReady?.() ?? N.isReady()) ? `<section class="pc-card pc-pad pc-warn-card"><b>还没填 NovelAI key</b><div class="pc-hint">填好才能生图。</div><button class="pc-btn dark pc-mt-s" data-act="nav" data-view="settings">去填</button></section>` : ''}
+    <section class="pc-card pc-pad ${!(N.genReady?.() ?? N.isReady()) ? 'pc-mt' : ''}">
       <div class="pc-row-between"><h2 class="pc-h2" style="margin:0">生成图片</h2>${s.naiMode === 'gpt' ? `<span class="pc-dim small">${esc(modelName)}</span>` : `<select data-st="novelaimode" title="换模型" style="width:auto;max-width:58%;padding:4px 8px;border-radius:999px;border:1.5px dashed var(--pc-dash);background:transparent;color:var(--pc-ink);font:inherit;font-size:13px">${N.MODELS.map(([v, t]) => `<option value="${v}" ${v === s.novelaimode ? 'selected' : ''}>${esc(t)}</option>`).join('')}${N.MODELS.some(m => m[0] === s.novelaimode) ? '' : `<option value="${esc(s.novelaimode)}" selected>${esc(modelName)}</option>`}</select>`}</div>
       <div class="pc-row-between" style="margin-top:10px"><span class="pc-label" style="margin:0">正面提示词</span><span class="pc-chips" style="margin:0;flex-wrap:wrap;justify-content:flex-end"><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.img2pBusy ? '<span class="pc-busy">看图中</span>' : '看图写提示词'}<input type="file" accept="image/*" data-img2prompt hidden ${ui.img2pBusy ? 'disabled' : ''}></label><button class="pc-pill dashed tiny" data-act="ideapose" ${ui.ideaBusy ? 'disabled' : ''}>${ui.ideaBusy ? '<span class="pc-busy">构思中</span>' : '✦ 灵感写姿势'}</button><label class="pc-pill dashed tiny" style="cursor:pointer">${ui.poseBusy ? '<span class="pc-busy">读姿势中</span>' : '看图读姿势构图'}<input type="file" accept="image/*" data-imgpose hidden ${ui.poseBusy ? 'disabled' : ''}></label></span></div>
       <div class="pc-artline">
@@ -8529,7 +8577,7 @@ function openOutfitDesigner({ mesId = null } = {}) {
             }
             if (k === 'save' || k === 'wear') { const c = saveOne(r, k === 'wear'); toastr.success(`已存进${c.name}的衣柜${k === 'wear' ? '，并设为固定穿' : ''}`, '服装设计', { timeOut: 2000 }); draw(); return; }
             if (k === 'img') {
-                if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '服装设计'); return; }
+                if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '服装设计'); return; }
                 const c = charOf(r);
                 r.busy = true; draw();
                 try {
@@ -9137,7 +9185,7 @@ async function charAction(act, el) {
         case 'wardthumb': d.options.wardThumb = el.dataset.v; commit({ silent: true }); render(); return true;
         case 'outimggen': {
             if (ui.outfit?.busy) return true;
-            if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '衣柜'); return true; }
+            if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '衣柜'); return true; }
             const o = curOutfit();
             const owner0 = ui.outfit.draft ? C.getChar(ui.outfit.dest) : C.findOutfit(ui.outfit.owner, ui.outfit.id)?.owner;
             // 模特：跟穿的人 / 男模特 / 女模特 / 指定角色
@@ -9376,7 +9424,7 @@ async function charAction(act, el) {
             return true;
         }
         case 'outtest': {
-            if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '角色'); return true; }
+            if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '角色'); return true; }
             const o = C.currentOutfit(c);
             ui.charBusy = 'outtest'; render();
             try {
@@ -9524,7 +9572,7 @@ async function charAction(act, el) {
         }
         case 'chartest': {
             if (ui.charBusy || ui.charKeepBusy) return true;
-            if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '角色'); return true; }
+            if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '角色'); return true; }
             const run = {}, registered = d.characters[c.key], chat = C.chatId();
             const current = () => !stopped && getData() === d && d.characters[c.key] === registered && C.getChar(c.key) && ui.charKey === c.key && C.chatId() === chat && ui.charTestRun === run;
             ui.charTestRun = run; ui.charBusy = 'test'; render();
@@ -9700,7 +9748,7 @@ async function changeCharBackground(mode, file) {
     const setImage = image => { ui.charTestImg = image; ui.charTestResult = { ...result, image }; };
     if (mode === 'orig' || mode === 'cut') { const image = mode === 'orig' ? ui.charTestOrig : cut; if (image) { setImage(image); render(); } return; }
     if (!cut || !['gen', 'file'].includes(mode)) return;
-    if (mode === 'gen' && !N.isReady()) { toastr.warning('先到设置里填生图接口', '角色'); return; }
+    if (mode === 'gen' && !(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填生图接口', '角色'); return; }
     const registered = d.characters[c.key], run = {}, prompt = String(ui.charBgQ || '').trim() || 'indoors';
     const artist = d.active ? M.ticketString(d, d.active) : '';
     const current = () => !stopped && getData() === d && d.characters[c.key] === registered && ui.charKey === c.key && charTestResult(c) === result && ui.charBgRun === run;
@@ -11955,7 +12003,7 @@ async function doGenerate() {
     if (st.generating || st.busy) return;
     st.generating = true;
     try {
-    if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '生成图片'); ui.view = 'settings'; render(); return; }
+    if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '生成图片'); ui.view = 'settings'; render(); return; }
     if (!st.pos.trim() && !studioCast().length) { toastr.warning('正面提示词是空的', '生成图片'); return; }
     if (T.hasChinese(st.pos.replace(/（[^（）]*）/g, ''))) {
         if (!(await confirmBox('正面提示词里有中文，NovelAI 看不懂中文。还是要生成吗？（中文描述可以写进下面的「固定提示词」，会自动转成标签）', { ok: '照样生成', cancel: '先不' }))) return;
@@ -12413,7 +12461,7 @@ function startBatch() {
     const pcBanLines = M.parseBatchLines(ui.batch.text).length - list.length;
     if (!list.length) { toastr.warning(pcBanLines ? `粘贴的 ${pcBanLines} 串里都有拉黑过的画师，没有可画的` : '先粘贴几位画师或画师串', '批量生成例图'); return; }
     if (pcBanLines) toastr.info(`跳过了 ${pcBanLines} 串拉黑过的画师`, '批量生成例图');
-    if (!N.isReady()) { toastr.warning('先到设置里填 NovelAI key', '批量生成例图'); return; }
+    if (!(N.genReady?.() ?? N.isReady())) { toastr.warning('先到设置里填 NovelAI key', '批量生成例图'); return; }
     const tpls = chosenTemplates('batch');
     if (!tpls.length) { toastr.warning('这条固定提示词已删除或还没有有效英文标签，请在生图页转换并重新保存后再选', '批量生成例图'); return; }
     const jobs = [];

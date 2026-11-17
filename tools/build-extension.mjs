@@ -71,6 +71,7 @@ import {applyModelAnlasCompatibility} from './model-anlas-compat.mjs';
 import {applyLobbyWhoCompatibility} from './lobby-who-compat.mjs';
 import {applyCentersGridCompatibility} from './centers-grid-compat.mjs';
 import {applyStreamFinalCompatibility} from './stream-final-compat.mjs';
+import {applyComfyAllCompatibility} from './comfy-all-compat.mjs';
 import {fileURLToPath} from 'node:url';
 process.chdir(fileURLToPath(new URL('../', import.meta.url)));
 const dir='.';
@@ -5449,6 +5450,8 @@ s=applyLobbyWhoCompatibility(s);
 s=applyCentersGridCompatibility(s);
 // 0.8.83：流式返回按尺寸挑最终图，只收到预览就报错不当结果
 s=applyStreamFinalCompatibility(s);
+// 本地 ComfyUI 版：「所有生图都用本地 ComfyUI」开关
+s=applyComfyAllCompatibility(s);
 // 0.8.68：inset 展开成 top/right/bottom/left，修手机上漫画阅读打不开（放最后，后面加的样式也一起展开）
 s=applyInsetCompatibility(s);
 const prefix=`// Generated from the full script; edit build-extension.mjs and shared-upload.js.
@@ -5464,7 +5467,7 @@ function clearTimeout(id) { window.clearTimeout(id); timers.delete(id); }
 `;
 fs.writeFileSync(dir+'/runtime.js',(prefix+s+'\n}\n').replace(/\r\n/g, '\n'));
 fs.copyFileSync('src/index.js',dir+'/index.js');
-fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库',loading_order:100,js:'index.js',author:'if love',version:'0.8.83',homePage:'https://github.com/ruoege49-ship-it/zhiku-tavern-helper',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
+fs.writeFileSync(dir+'/manifest.json',JSON.stringify({display_name:'智库',loading_order:100,js:'index.js',author:'if love',version:'0.8.83',homePage:'https://github.com/YOUR_GITHUB_NAME/zhiku-tavern-helper',auto_update:true,minimum_client_version:'1.14.0',dependencies:[],hooks:{enable:'onEnable',disable:'onDisable',delete:'onDelete'}},null,2)+'\n');
 fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'zhiku-tavern-helper',version:'0.8.83',private:true,type:'module'},null,2)+'\n');
 fs.writeFileSync(dir+'/capability-contract.json',JSON.stringify({schemaVersion:1,minimum:{sillytavern:'1.14.0',tavernHelper:null},requirements:[{id:'host-context',owner:'sillytavern',symbol:'SillyTavern.getContext',required:true,fallback:null}]},null,2));
 assert(!s.includes('getButtonEvent('));
