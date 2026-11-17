@@ -1711,7 +1711,7 @@ function imageInsertionPoint(text, sentence) {
     return safeImageInsertionPoint(text,end);
 }
 
-// 智库 · 原生扩展版 v0.8.80（二改自从前佬的智绘姬）
+// 智库 · 原生扩展版 v0.8.81（二改自从前佬的智绘姬）
 // 不需要智绘姬，填 NovelAI key 就能用。
 // NovelAI 请求格式参考了智绘姬（作者：从前跟你一样，https://github.com/damoshen123/st-chatu8，AFPL v9）。
 const P = (() => { try { if (window.parent && window.parent !== window && window.parent.document) return window.parent; } catch (e) { /* 跨域 */ } return window; })();
@@ -1760,7 +1760,7 @@ const __shim = {
     get extension_settings() { return __ctx().extensionSettings; },
 };
 
-globalThis.__PC_VERSION = '0.8.80';
+globalThis.__PC_VERSION = '0.8.81';
 
 // ───── model.js ─────
 const __mod_model = (() => {
@@ -9853,12 +9853,11 @@ const NSFW_WHO = LOBBY_TAGS[0][1];
 /** 旧标签（性向）也照样隐藏，不在标签栏里出现 */
 const ORIENT = [...NSFW_WHO, 'R18G', '剧透'];
 const tagLabel = t => t;
-/** 这条分享的 NSFW 图里是谁：新标签直接看；旧的按性向、题材推 */
+/** 这条分享的 NSFW 图里是谁：只看裸体标签，题材标签（BL/BG/GB/GL）不算 */
 function postWho(p) {
     const t = new Set(p.tags || []), who = new Set();
     if (t.has('男性裸体')) who.add('male');
     if (t.has('女性裸体')) who.add('female');
-    if (!who.size) { if (t.has('BL')) who.add('male'); if (t.has('GL')) who.add('female'); if (t.has('BG') || t.has('GB')) { who.add('male'); who.add('female'); } }
     return who;
 }
 const postHasNsfw = p => !!(p.nsfw || (p.images || []).some(i => i.nsfw));
@@ -9920,7 +9919,7 @@ function viewLobby(d) {
     const view = d.options.lobbyView || 'grid';
     const blk = lobbyBlock();
     const nm = lobbyNsfwMode();
-    // 只看男性 / 女性的 NSFW：带 NSFW 的分享只留对得上的；没有 NSFW 的照常显示
+    // 只看男性 / 女性的：带 NSFW 的分享只留裸体标签只选了这一种的（题材标签不算）；没有 NSFW 的照常显示
     // 只有男性裸体 / 只有女性裸体：带裸体的分享只留只有这一种的；没有裸体的照常显示。R18G 没打开就不显示
     const whoOk = p => p.mine || ((nm === 'all' || !(postHasNsfw(p) || (p.tags || []).some(t => t === 'NSFW' || NSFW_WHO.includes(t))) || (postWho(p).has(nm) && postWho(p).size === 1)) && (d.options.lobbyR18g || !(p.tags || []).includes('R18G')));
     const items = lb.items.filter(p => (p.mine || (!p.tags.some(t => blocked.has(t)) && !blk.users.includes(p.nickname) && !blk.posts.includes(p.id))) && (!lb.tag2 || p.tags.includes(lb.tag2)) && whoOk(p));
